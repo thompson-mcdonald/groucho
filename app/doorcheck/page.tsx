@@ -2,6 +2,17 @@
 
 import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { createClient } from "@supabase/supabase-js"
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    realtime: {
+      params: { apikey: process.env.NEXT_PUBLIC_SUPABASE_REALTIME_KEY! },
+    },
+  }
+)
 
 type Message = {
   role: "bot" | "user"
@@ -11,16 +22,17 @@ type Message = {
 const INITIAL_MESSAGES: Message[] = [{ role: "bot", content: "Hi." }]
 
 const SESSION_KEY = "pe_session_id"
+const SECRET_KEY = "pe_session_secret"
 
-function getOrCreateSessionId(): string {
-  const existing = sessionStorage.getItem(SESSION_KEY)
+function getOrCreateSession(): string {
+  const existing = localStorage.getItem(SESSION_KEY)
   if (existing) return existing
-  return resetSessionId()
+  return resetSession()
 }
 
-function resetSessionId(): string {
+function resetSession(): string {
   const id = crypto.randomUUID()
-  sessionStorage.setItem(SESSION_KEY, id)
+  localStorage.setItem(SESSION_KEY, id)
   return id
 }
 
@@ -32,11 +44,47 @@ export default function DoorCheck() {
   const [sessionId, setSessionId] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null,
+  )
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
 
   useEffect(() => {
-    setSessionId(getOrCreateSessionId())
+    setSessionId(getOrCreateSession())
   }, [])
+
+  useEffect(() => {
+    if (!sessionId) return
+    const ch = supabase.channel("pe-typing")
+    ch.subscribe()
+    typingChannelRef.current = ch
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      supabase.removeChannel(ch)
+      typingChannelRef.current = null
+    }
+  }, [sessionId])
+
+  function broadcastTyping(isTyping: boolean) {
+    typingChannelRef.current?.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { sessionId, isTyping },
+    })
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setInput(e.target.value)
+    if (e.target.value) {
+      broadcastTyping(true)
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      typingTimeoutRef.current = setTimeout(() => broadcastTyping(false), 2000)
+    } else {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      broadcastTyping(false)
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -45,6 +93,9 @@ export default function DoorCheck() {
   async function submit() {
     const text = input.trim()
     if (!text || loading || concluded || !sessionId) return
+
+    broadcastTyping(false)
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
 
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setInput("")
@@ -59,7 +110,7 @@ export default function DoorCheck() {
 
       // Stale session (concluded conversation) — reset and retry once
       if (res.status === 409) {
-        const freshId = resetSessionId()
+        const freshId = resetSession()
         setSessionId(freshId)
         res = await fetch("/api/chat", {
           method: "POST",
@@ -75,8 +126,12 @@ export default function DoorCheck() {
 
       if (data.status === "passed") {
         setConcluded(true)
-        setTimeout(() => router.push("/doorcheck/access"), 1400)
-      } else if (data.status === "redirected") {
+        if (data.secret) localStorage.setItem(SECRET_KEY, data.secret)
+        setTimeout(
+          () => router.push(`/doorcheck/access?sid=${sessionId}`),
+          1400,
+        )
+      } else if (data.status === "redirected" || data.status === "rejected") {
         setConcluded(true)
       }
     } catch {
@@ -99,7 +154,7 @@ export default function DoorCheck() {
   return (
     <div className="flex flex-col h-screen">
       {/* Messages */}
-      <div className="max-w-[1040px] w-full mx-auto flex flex-1 overflow-y-auto gap-[1.25rem] pt-[3rem] pb-[1rem] px-[2rem] flex-col">
+      <div className="max-w-[1040px] w-[80%] mx-auto flex flex-1 overflow-y-auto gap-[1.25rem] pt-[3rem] pb-[1rem] flex-col">
         {messages.map((msg, i) => (
           <div
             key={i}
@@ -126,12 +181,12 @@ export default function DoorCheck() {
 
       {/* Input */}
       {!concluded && (
-        <div className="max-w-[1040px] w-full mx-auto pt-[1rem] pb-[5rem] px-[2rem]">
+        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem]">
           <input
             ref={inputRef}
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             autoFocus
             disabled={loading}

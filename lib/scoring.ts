@@ -76,8 +76,7 @@ export async function scoreMessage(
 
     const response = await client.messages.create({
       model: 'claude-opus-4-6',
-      max_tokens: 2048,
-      thinking: { type: 'adaptive' },
+      max_tokens: 256,
       system: SCORING_SYSTEM_PROMPT,
       messages,
     });

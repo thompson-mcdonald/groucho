@@ -1,21 +1,59 @@
-"use client";
+"use client"
 
-import { useState } from "react";
+import { useState, useEffect } from "react"
+
+const SECRET_KEY = "pe_session_secret"
 
 export default function Access() {
-  const [email, setEmail] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [authorized, setAuthorized] = useState<boolean | null>(null)
+  const [email, setEmail] = useState("")
+  const [submitted, setSubmitted] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sid = params.get("sid")
+    const secret = localStorage.getItem(SECRET_KEY)
+
+    if (!sid || !secret) {
+      setAuthorized(false)
+      return
+    }
+
+    fetch(`/api/access?sid=${encodeURIComponent(sid)}&secret=${encodeURIComponent(secret)}`)
+      .then((r) => r.json())
+      .then((data) => setAuthorized(data.authorized === true))
+      .catch(() => setAuthorized(false))
+  }, [])
 
   function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || loading) return;
-    setLoading(true);
+    e.preventDefault()
+    if (!email.trim() || loading) return
+    setLoading(true)
     // Placeholder — wire up later
     setTimeout(() => {
-      setSubmitted(true);
-      setLoading(false);
-    }, 0);
+      setSubmitted(true)
+      setLoading(false)
+    }, 0)
+  }
+
+  if (authorized === null) return null
+
+  if (!authorized) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <p style={{ fontSize: "0.875rem", letterSpacing: "0.05em", opacity: 0.5 }}>
+          Access denied.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -40,12 +78,9 @@ export default function Access() {
             maxWidth: "320px",
             padding: "0 2rem",
           }}
+          className=""
         >
-          <label
-            style={{ fontSize: "0.875rem", letterSpacing: "0.05em" }}
-          >
-            Email.
-          </label>
+          <label className="text-[0.875rem] tracking-[0.05rem]">Email.</label>
           <input
             type="email"
             value={email}
@@ -85,5 +120,5 @@ export default function Access() {
         </form>
       )}
     </div>
-  );
+  )
 }

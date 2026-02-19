@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { randomUUID } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
 import { scoreMessage, type ConversationMessage } from "@/lib/scoring"
 import { supabase } from "@/lib/supabase"
@@ -27,7 +28,7 @@ CONVERSATION STRUCTURE
 
 You have already said "Hi." That's done.
 
-Exchange 1 — They respond to "Hi." You say: "What's going on?"
+Exchange 1 — They respond to "Hi." You respond. 
 Exchange 2 — They answer. You probe what they actually care about. One question, nothing else.
 Exchange 3 — They answer. You test whether they understand loss — what disappears, why it matters, what their presence costs. One question or observation.
 Exchange 4 — You've heard enough. Make your call.
@@ -53,21 +54,32 @@ Imperfect but honest. Understands stakes. Pass.
 
 ---
 
-WHAT FAILS
+WHAT FAILS — REDIRECT (not right for this space, but not a problem)
 
-- Generic vocabulary: "underground culture", "authentic vibes", "curated experience", "the scene"
-- Name-dropping without anything behind it
+- Generic vocabulary without substance: "underground culture", "authentic vibes", "the scene" — they just don't know better
+- Abstraction without personal stake: can describe commodification as a concept but has no skin in the game
+- Genuine interest buried under affected language — not performing, just out of their depth
+
+Example redirect:
+> "I think preserving underground spaces is really important for communities."
+Understands the issue abstractly. No personal connection. Not a fit, but not a threat. Redirect.
+
+---
+
+WHAT FAILS — REJECTED (their presence makes the thing worse)
+
 - Access-as-the-point energy: what they can buy, join, or get
 - Trend-chasing language — anything that sounds like a brand deck
 - Performed enthusiasm: "I'm so passionate about preserving spaces like this"
-- Abstraction without personal stake: can describe commodification as a concept but has no skin in the game
+- Name-dropping purely for status or credibility, nothing behind it
+- Marketing language — they see culture as inventory
 
-Example failing exchange:
+Example rejection:
 > "I'm really into underground culture and authentic music experiences."
-Generic. No substance. Fail.
+Culture as product. No personal stake. Rejected.
 
 > "I think it's so important to preserve these curated spaces for the community."
-Marketing language. No personal stake. Fail.
+Marketing language. Performed care. Rejected.
 
 ---
 
@@ -76,9 +88,13 @@ DECISION
 When ready:
 
 Pass: respond with exactly — Yeah. Here.
-Fail: respond with exactly — REDIRECT
+Redirect: respond with exactly — REDIRECT
+Reject: respond with exactly — REJECTED
 
-Nothing else. No explanation. No softening.`
+Nothing else. No explanation. No softening.
+
+REDIRECT when the person is genuine but doesn't understand what's at stake — misaligned, not predatory.
+REJECTED when the person's values or presence would actively harm the space — extractive, commodifying, treating access as the point.`
 
 // The opening exchange is injected into every Claude call as fixed context.
 // It is not persisted to the DB — the conversation row is only created on the
@@ -114,7 +130,9 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (existing) {
-    if (["passed", "failed", "redirected"].includes(existing.status)) {
+    if (
+      ["passed", "failed", "redirected", "rejected"].includes(existing.status)
+    ) {
       return NextResponse.json(
         { error: "Conversation concluded" },
         { status: 409 },
@@ -214,14 +232,23 @@ export async function POST(req: NextRequest) {
   }
 
   // 9. Resolve pass / fail and update conversation status
-  let status: "passed" | "redirected" | null = null
+  let status: "passed" | "redirected" | "rejected" | null = null
   if (assistantContent === "Yeah. Here.") {
     status = "passed"
   } else if (assistantContent === "REDIRECT") {
     status = "redirected"
+  } else if (assistantContent === "REJECTED") {
+    status = "rejected"
   }
 
-  if (status) {
+  let successSecret: string | null = null
+  if (status === "passed") {
+    successSecret = randomUUID()
+    await supabase
+      .from("conversations")
+      .update({ status, success_secret: successSecret })
+      .eq("id", conversationId)
+  } else if (status !== null) {
     await supabase
       .from("conversations")
       .update({ status })
@@ -232,5 +259,6 @@ export async function POST(req: NextRequest) {
     message: assistantContent,
     status: status ?? "active",
     scores,
+    ...(successSecret ? { secret: successSecret } : {}),
   })
 }
