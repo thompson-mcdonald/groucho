@@ -105,20 +105,53 @@ const OPENING: Anthropic.MessageParam = {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { message: string; sessionId: string }
+  let body: { message: string; sessionId: string; personaId?: string }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 })
   }
 
-  const { message, sessionId } = body
+  const { message, sessionId, personaId } = body
   if (!message?.trim() || !sessionId?.trim()) {
     return NextResponse.json(
       { error: "Missing required fields" },
       { status: 400 },
     )
   }
+
+  // Fetch the requested persona (if provided) or fall back to the default active one
+  let defaultPersona: {
+    id: string
+    prompt: string
+    pass_threshold: number
+    reject_threshold: number
+  } | null = null
+
+  if (personaId) {
+    const { data } = await supabase
+      .from("personas")
+      .select("id, prompt, pass_threshold, reject_threshold")
+      .eq("id", personaId)
+      .eq("is_active", true)
+      .single()
+    defaultPersona = data
+  }
+
+  if (!defaultPersona) {
+    const { data } = await supabase
+      .from("personas")
+      .select("id, prompt, pass_threshold, reject_threshold")
+      .eq("is_active", true)
+      .eq("is_default", true)
+      .single()
+    defaultPersona = data
+  }
+
+  const systemPrompt = defaultPersona?.prompt ?? DOORMAN_SYSTEM_PROMPT
+  const resolvedPersonaId: string | null = defaultPersona?.id ?? null
+  const passThreshold: number = defaultPersona?.pass_threshold ?? 0.65
+  const rejectThreshold: number = defaultPersona?.reject_threshold ?? 0.25
 
   // 1. Create or fetch conversation
   let conversationId: string
@@ -142,7 +175,7 @@ export async function POST(req: NextRequest) {
   } else {
     const { data: created, error: createError } = await supabase
       .from("conversations")
-      .insert({ session_id: sessionId })
+      .insert({ session_id: sessionId, persona_id: resolvedPersonaId })
       .select("id")
       .single()
 
@@ -198,7 +231,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: "claude-opus-4-6",
       max_tokens: 256,
-      system: DOORMAN_SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: claudeMessages,
     })
 
@@ -231,14 +264,19 @@ export async function POST(req: NextRequest) {
     // Non-fatal — response still goes to the user
   }
 
-  // 9. Resolve pass / fail and update conversation status
+  // 9. Resolve pass / fail and update conversation status.
+  //    Claude's terminal response triggers evaluation; the overall score against
+  //    the persona's thresholds determines the actual outcome.
+  //    - "Yeah. Here." passes only if score >= passThreshold (else redirect)
+  //    - "REJECTED" rejects only if score <= rejectThreshold (else redirect)
+  //    - "REDIRECT" always redirects
   let status: "passed" | "redirected" | "rejected" | null = null
   if (assistantContent === "Yeah. Here.") {
-    status = "passed"
+    status = scores.overall >= passThreshold ? "passed" : "redirected"
   } else if (assistantContent === "REDIRECT") {
     status = "redirected"
   } else if (assistantContent === "REJECTED") {
-    status = "rejected"
+    status = scores.overall <= rejectThreshold ? "rejected" : "redirected"
   }
 
   let successSecret: string | null = null

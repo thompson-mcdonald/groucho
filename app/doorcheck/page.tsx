@@ -19,6 +19,13 @@ type Message = {
   content: string
 }
 
+type PersonaOption = {
+  id: string
+  name: string
+  is_active: boolean
+  is_default: boolean
+}
+
 const INITIAL_MESSAGES: Message[] = [{ role: "bot", content: "Hi." }]
 
 const SESSION_KEY = "pe_session_id"
@@ -42,6 +49,8 @@ export default function DoorCheck() {
   const [loading, setLoading] = useState(false)
   const [concluded, setConcluded] = useState(false)
   const [sessionId, setSessionId] = useState("")
+  const [personas, setPersonas] = useState<PersonaOption[]>([])
+  const [selectedPersonaId, setSelectedPersonaId] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(
@@ -52,6 +61,18 @@ export default function DoorCheck() {
 
   useEffect(() => {
     setSessionId(getOrCreateSession())
+  }, [])
+
+  useEffect(() => {
+    fetch("/api/admin/personas")
+      .then((r) => r.json())
+      .then((data: PersonaOption[]) => {
+        const active = data.filter((p) => p.is_active)
+        setPersonas(active)
+        const def = active.find((p) => p.is_default)
+        if (def) setSelectedPersonaId(def.id)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -102,10 +123,11 @@ export default function DoorCheck() {
     setLoading(true)
 
     try {
+      const personaId = selectedPersonaId || undefined
       let res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId }),
+        body: JSON.stringify({ message: text, sessionId, personaId }),
       })
 
       // Stale session (concluded conversation) — reset and retry once
@@ -115,7 +137,7 @@ export default function DoorCheck() {
         res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, sessionId: freshId }),
+          body: JSON.stringify({ message: text, sessionId: freshId, personaId }),
         })
       }
 
@@ -151,6 +173,17 @@ export default function DoorCheck() {
     }
   }
 
+  function restart() {
+    const newId = resetSession()
+    localStorage.removeItem(SECRET_KEY)
+    setSessionId(newId)
+    setMessages(INITIAL_MESSAGES)
+    setInput("")
+    setConcluded(false)
+    const def = personas.find((p) => p.is_default)
+    if (def) setSelectedPersonaId(def.id)
+  }
+
   return (
     <div className="flex flex-col h-screen">
       {/* Messages */}
@@ -179,6 +212,29 @@ export default function DoorCheck() {
         <div ref={bottomRef} />
       </div>
 
+      {/* Reset */}
+      {concluded && (
+        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem]">
+          <button
+            onClick={restart}
+            style={{
+              background: "transparent",
+              border: "none",
+              borderBottom: "1px solid rgba(255,255,255,0.15)",
+              color: "rgba(255,255,255,0.25)",
+              outline: "none",
+              padding: "0.5rem 0",
+              fontSize: "0.7rem",
+              fontFamily: "inherit",
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+            }}
+          >
+            start over
+          </button>
+        </div>
+      )}
+
       {/* Input */}
       {!concluded && (
         <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem]">
@@ -193,6 +249,31 @@ export default function DoorCheck() {
             placeholder="Type your message"
             className="w-full font-inherit text-white text-md py-[0.5rem] outline-none border-b border-b-white/40 focus:border-b-white/60 bg-transparent disabled:opacity-30"
           />
+          {messages.length === 1 && personas.length >= 1 && (
+            <select
+              value={selectedPersonaId}
+              onChange={(e) => setSelectedPersonaId(e.target.value)}
+              style={{
+                display: "block",
+                marginTop: "0.75rem",
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.3)",
+                outline: "none",
+                fontSize: "0.7rem",
+                fontFamily: "inherit",
+                letterSpacing: "0.06em",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              {personas.map((p) => (
+                <option key={p.id} value={p.id} style={{ background: "#000" }}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
     </div>
