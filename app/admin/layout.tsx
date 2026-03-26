@@ -23,7 +23,7 @@ export default function AdminLayout({
             opacity: 0.3,
           }}
         >
-          PUBLIC EQUITY™ / ADMIN
+          Groucho / ADMIN
         </span>
         <nav
           style={{

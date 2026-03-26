@@ -1,14 +1,62 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-Book.woff");
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-BookItalic.woff");
+  font-weight: 400;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-Light.woff");
+  font-weight: 300;
+}
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-LightItalic.woff");
+  font-weight: 300;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-Bold.woff");
+  font-weight: 600;
+}
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("/OverusedGrotesk-BoldItalic.woff");
+  font-weight: 600;
+  font-style: italic;
+}
+
+:root {
+  --font-sans: "Overused Grotesk", sans-serif;
+}
+
+@utility scrollbar-hidden {
+  &::-webkit-scrollbar {
+    scrollbar-width: thin;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+}
+
 html,
 body {
-  background: #000;
+  background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--font-sans);
   height: 100%;
 }

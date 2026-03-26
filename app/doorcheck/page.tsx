@@ -11,7 +11,7 @@ const supabase = createClient(
     realtime: {
       params: { apikey: process.env.NEXT_PUBLIC_SUPABASE_REALTIME_KEY! },
     },
-  }
+  },
 )
 
 type Message = {
@@ -137,7 +137,11 @@ export default function DoorCheck() {
         res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, sessionId: freshId, personaId }),
+          body: JSON.stringify({
+            message: text,
+            sessionId: freshId,
+            personaId,
+          }),
         })
       }
 
@@ -185,36 +189,42 @@ export default function DoorCheck() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen min-h-0">
       {/* Messages */}
-      <div className="max-w-[1040px] w-[80%] mx-auto flex flex-1 overflow-y-auto gap-[1.25rem] pt-[3rem] pb-[1rem] flex-col">
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`leading-[1.6] max-w-[65%] ${msg.role === "user" ? "self-end opacity-100" : "self-start opacity-70"}`}
-          >
-            <div className="text-md italic">
-              {msg.role === "bot" ? "Lou" : "You"}
-            </div>
-            <div className={`leading-[1.6] text-lg md:text-xl`}>
-              {msg.content}
-            </div>
-          </div>
-        ))}
+      <div className="max-w-[1040px] w-[80%] mx-auto flex flex-1 min-h-0 overflow-y-auto scrollbar-hidden pt-[3rem] pb-[1rem] flex-col">
+        <div className="mt-auto flex flex-col gap-[1.25rem]">
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`leading-[1.6] max-w-[65%] ${msg.role === "user" ? "self-end opacity-100" : "self-start opacity-70"}`}
+            >
+              {msg.role === "bot" ? (
+                <div className="text-md font-sans opacity-50">
+                  {personas.find((item) => item.id === selectedPersonaId)
+                    ?.name ?? "Lou"}
+                </div>
+              ) : null}
 
-        {loading && (
-          <div className="self-start opacity-40">
-            <div className="text-md italic">Lou</div>
-            <div className="text-lg md:text-xl">_</div>
-          </div>
-        )}
+              <div className={`leading-[1.6] text-lg md:text-2xl font-sans`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
 
-        <div ref={bottomRef} />
+          {loading && (
+            <div className="self-start opacity-40">
+              <div className="text-md italic">Lou</div>
+              <div className="text-lg md:text-xl">_</div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Reset */}
       {concluded && (
-        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem]">
+        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem] shrink-0">
           <button
             onClick={restart}
             style={{
@@ -237,7 +247,7 @@ export default function DoorCheck() {
 
       {/* Input */}
       {!concluded && (
-        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem]">
+        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem] shrink-0">
           <input
             ref={inputRef}
             type="text"
@@ -247,7 +257,7 @@ export default function DoorCheck() {
             autoFocus
             disabled={loading}
             placeholder="Type your message"
-            className="w-full font-inherit text-white text-md py-[0.5rem] outline-none border-b border-b-white/40 focus:border-b-white/60 bg-transparent disabled:opacity-30"
+            className="shadow-xl shadow-muted bg-white rounded-xl py-3 px-5 w-full font-inherit text-black/90 text-lg font-[400] outline-none"
           />
           {messages.length === 1 && personas.length >= 1 && (
             <select
