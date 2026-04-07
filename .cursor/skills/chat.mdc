@@ -1,0 +1,340 @@
+---
+alwaysApply: true
+---
+
+Polished AI chat Component with thinking state indicator and deep thinking mode toggle. Features smooth message animations, auto-scroll, and text shimmer effects for loading states.
+
+### Dependencies:
+framer-motion
+react
+lucide-react
+
+### Interaction Type
+Type your question
+Toggle deep thinking mode
+Watch thinking animation
+Press Enter to send
+
+
+Source code:
+
+```tsx
+"use client";
+
+import { ArrowUp, BookOpen } from "lucide-react";
+import {
+  AnimatePresence,
+  motion,
+  MotionConfig,
+  useMotionValue,
+} from "motion/react";
+import { JSX, useMemo } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import React from "react";
+
+import { cn } from "@/lib/utils";
+
+// Animation constants
+const ANIMATION_DURATION = 0.1;
+
+// Component for animated placeholder text
+const AnimatedPlaceholder = ({
+  isDeepMindMode,
+}: {
+  isDeepMindMode: boolean;
+}) => (
+  <AnimatePresence mode="wait">
+    <motion.p
+      key={isDeepMindMode ? "search" : "ask"}
+      initial={{ opacity: 0, y: 5 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -5 }}
+      transition={{ duration: ANIMATION_DURATION }}
+      className="text-foreground/20 pointer-events-none absolute"
+    >
+      {isDeepMindMode ? "Type Shit.." : "Ask anything..."}
+    </motion.p>
+  </AnimatePresence>
+);
+
+// Message type definition
+interface ChatMessage {
+  id: number;
+  message: string;
+  isFromUser: boolean;
+}
+
+const Skiper85 = () => {
+  // Input and UI state
+  const [userInput, setUserInput] = useState("");
+  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const [isSubmit, setIsSubmit] = useState(false);
+
+  // Chat messages state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const messageEndRef = useRef<HTMLDivElement>(null);
+  const messageElementsRef = useRef<HTMLDivElement[]>([]);
+  const [isThinking, setIsThinking] = useState(false);
+
+  // Animation state
+  const [messageIndex, setMessageIndex] = useState(0);
+  const scrollMarginTop = useMotionValue(0);
+
+  // Deep Mind state
+  const [isDeepMindMode, setIsDeepMindMode] = useState(false);
+
+  // Handle message submission
+  const handleMessageSubmit = async () => {
+    if (isSubmit) {
+      setIsSubmit(false);
+      return;
+    }
+
+    if (userInput.trim() === "") {
+      return;
+    }
+
+    setIsSubmit(true);
+    const currentInput = userInput;
+    setUserInput("");
+    setMessageIndex((currentIndex) =>
+      currentIndex === 0 ? currentIndex + 1 : currentIndex + 2,
+    );
+
+    // Add user message
+    const userMessage: ChatMessage = {
+      id: chatMessages.length + 1,
+      message: currentInput,
+      isFromUser: true,
+    };
+    setChatMessages([...chatMessages, userMessage]);
+
+    // Show thinking state
+    setIsThinking(true);
+
+    // Wait before showing response
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Add bot response
+    const botMessage: ChatMessage = {
+      id: chatMessages.length + 2,
+      message: "I dunnoo 😭",
+      isFromUser: false,
+    };
+    setChatMessages((prev) => [...prev, botMessage]);
+
+    setIsThinking(false);
+    setIsSubmit(false);
+  };
+
+  // Auto-scroll to latest message when new messages are added
+  useLayoutEffect(() => {
+    const currentMessageCount = chatMessages.length;
+    const calculatedScrollMargin =
+      currentMessageCount > 0
+        ? window.innerHeight -
+          (messageElementsRef.current[currentMessageCount - 1]?.clientHeight ||
+            0) -
+          // (messageElementsRef.current[currentMessageCount - 2]?.clientHeight ||
+          //   0) -
+          (inputContainerRef.current?.clientHeight || 0) -
+          20
+        : 0;
+
+    scrollMarginTop.set(calculatedScrollMargin);
+
+    // Smooth scroll to the latest message
+    requestAnimationFrame(() => {
+      messageEndRef.current?.scrollIntoView({
+        block: "start",
+        behavior: "smooth",
+      });
+    });
+  }, [chatMessages, messageIndex, scrollMarginTop]);
+
+  return (
+    <MotionConfig
+      transition={{
+        type: "spring",
+        stiffness: 300,
+        damping: 30,
+      }}
+    >
+      <div className="bg-background flex h-full w-full items-center justify-center rounded-3xl border py-4">
+        {/* Chat Messages Container */}
+        <motion.div className="no-scroll flex h-full max-w-3xl flex-1 flex-col overflow-scroll scroll-smooth px-3 py-6">
+          {chatMessages.map((message, messageId) => (
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 10,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              ref={(element) => {
+                if (element) {
+                  messageElementsRef.current[messageId] = element;
+                }
+              }}
+              key={messageId}
+              className={cn(
+                "bg-muted my-2 w-fit max-w-xs break-words rounded-2xl px-4 py-2",
+                message.isFromUser ? "self-end" : "self-start",
+              )}
+            >
+              {message.message}
+            </motion.div>
+          ))}
+          {isThinking && (
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 10,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{ delay: 0.25 }}
+              className="bg-muted/50 my-2 w-fit max-w-xs self-start rounded-2xl px-4 py-2"
+            >
+              <TextShimmer>Thinking...</TextShimmer>
+            </motion.div>
+          )}
+          <motion.div
+            ref={messageEndRef}
+            style={{ marginTop: scrollMarginTop }}
+          />
+        </motion.div>
+
+        {/* Input Container */}
+        <div
+          ref={inputContainerRef}
+          className="rounded-t-4xl fixed bottom-2 w-full max-w-3xl gap-1 px-3 pb-3"
+        >
+          <div className="bg-muted rounded-2xl border dark:!border-[#181818]">
+            <div className="bg-background outline-border relative rounded-2xl outline dark:!outline-[#181818]">
+              {/* Text Input Area */}
+              <div className="relative">
+                <textarea
+                  value={userInput}
+                  autoFocus
+                  placeholder=""
+                  className="field-sizing-content pr-15 max-h-52 w-full resize-none rounded-none !bg-transparent p-4 !text-base leading-[1.2] shadow-none focus-visible:outline-0 focus-visible:ring-0"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleMessageSubmit();
+                    }
+                  }}
+                  onChange={(e) => {
+                    setUserInput(e.target.value);
+                  }}
+                />
+                {!userInput && (
+                  <div className="pointer-events-none absolute left-0 top-0 h-full w-full p-4">
+                    <AnimatedPlaceholder isDeepMindMode={isDeepMindMode} />
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => handleMessageSubmit()}
+                className="hover:bg-muted hover:border-border absolute right-2 top-2 flex size-10 items-center justify-center rounded-xl border border-transparent p-2"
+              >
+                {!isSubmit ? (
+                  <ArrowUp className="size-5" />
+                ) : (
+                  <div className="size-3.5 rounded-[4px] bg-current"></div>
+                )}
+              </button>
+            </div>
+            <div className="flex h-10 items-center justify-between px-1.5">
+              <button
+                onClick={() => setIsDeepMindMode(!isDeepMindMode)}
+                className={cn(
+                  "text-muted-foreground hover:bg-background/50 hover:text-foreground flex items-center gap-2 rounded-lg px-2 py-1.5 transition-all duration-100 active:scale-95",
+
+                  isDeepMindMode && "text-foreground",
+                )}
+              >
+                <BookOpen className="size-4" />
+
+                {isDeepMindMode ? (
+                  <TextShimmer className="text-xs font-medium">
+                    Deep Thinking Now
+                  </TextShimmer>
+                ) : (
+                  <span className="text-xs font-medium">Try Deep Thinking</span>
+                )}
+              </button>
+              <p className="text-muted-foreground/50 pr-2 text-xs">
+                AGI is here
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </MotionConfig>
+  );
+};
+
+export type TextShimmerProps = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  children: any;
+  as?: React.ElementType;
+  className?: string;
+  duration?: number;
+  spread?: number;
+};
+
+function TextShimmerComponent({
+  children,
+  as: Component = "p",
+  className,
+  duration = 2,
+  spread = 2,
+}: TextShimmerProps) {
+  const MotionComponent = motion.create(
+    Component as keyof JSX.IntrinsicElements,
+  );
+
+  const dynamicSpread = useMemo(() => {
+    return children.length * spread;
+  }, [children, spread]);
+
+  return (
+    <MotionComponent
+      className={cn(
+        "relative inline-block bg-[length:250%_100%,auto] bg-clip-text",
+        "text-transparent [--base-color:#a1a1aa] [--base-gradient-color:#000]",
+        "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--base-gradient-color),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
+        "dark:[--base-color:#71717a] dark:[--base-gradient-color:#ffffff] dark:[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--base-gradient-color),#0000_calc(50%+var(--spread)))]",
+        className,
+      )}
+      initial={{ backgroundPosition: "100% center" }}
+      animate={{ backgroundPosition: "0% center" }}
+      transition={{
+        repeat: Infinity,
+        duration,
+        ease: "linear",
+      }}
+      style={
+        {
+          "--spread": `${dynamicSpread}px`,
+          backgroundImage: `var(--bg), linear-gradient(var(--base-color), var(--base-color))`,
+        } as React.CSSProperties
+      }
+    >
+      {children}
+    </MotionComponent>
+  );
+}
+
+export const TextShimmer = React.memo(TextShimmerComponent);
+
+export { Skiper85 };
+
+```
