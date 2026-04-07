@@ -1,8 +1,15 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@supabase/supabase-js"
+import {
+  AnimatePresence,
+  motion,
+  MotionConfig,
+} from "motion/react"
+import { TextShimmer } from "@/components/doorcheck/TextShimmer"
+import { cn } from "@/lib/utils"
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,6 +22,7 @@ const supabase = createClient(
 )
 
 type Message = {
+  id: string
   role: "bot" | "user"
   content: string
 }
@@ -26,10 +34,57 @@ type PersonaOption = {
   is_default: boolean
 }
 
-const INITIAL_MESSAGES: Message[] = [{ role: "bot", content: "Hi." }]
+const INITIAL_MESSAGES: Message[] = [
+  { id: "initial-hi", role: "bot", content: "Hi." },
+]
 
 const SESSION_KEY = "pe_session_id"
 const SECRET_KEY = "pe_session_secret"
+
+/** Easings for handoff: thinking exit → reply enter */
+const EASE_OUT = [0.33, 1, 0.68, 1] as const
+
+/** One smooth thinking entrance: soft container + tight line stagger (no long dead air) */
+const thinkingContainerVariants = {
+  hidden: { opacity: 0, y: 8, filter: "blur(6px)" },
+  visible: {
+    opacity: 1,
+    y: 0,
+    filter: "blur(0px)",
+    transition: {
+      duration: 0.5,
+      ease: EASE_OUT,
+      staggerChildren: 0.07,
+      delayChildren: 0.04,
+    },
+  },
+  exit: {
+    opacity: 0,
+    y: -6,
+    filter: "blur(3px)",
+    transition: {
+      duration: 0.32,
+      ease: EASE_OUT,
+    },
+  },
+} as const
+
+const thinkingLineVariants = {
+  hidden: { opacity: 0, y: 4 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.36, ease: EASE_OUT },
+  },
+} as const
+
+/** Softer spring for reflow when new messages push older ones up */
+const LAYOUT_SPRING = {
+  type: "spring" as const,
+  stiffness: 210,
+  damping: 28,
+  mass: 0.92,
+}
 
 function getOrCreateSession(): string {
   const existing = localStorage.getItem(SESSION_KEY)
@@ -57,7 +112,37 @@ export default function DoorCheck() {
     null,
   )
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Bot reply is committed after the thinking row exits so layout doesn’t stack two tails */
+  const assistantHandoffRef = useRef<Message | null>(null)
   const router = useRouter()
+
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+    })
+  }, [])
+
+  /** Let layout animations start before scrolling so prior bubbles ease up smoothly */
+  useEffect(() => {
+    const id = window.setTimeout(() => scrollToBottom(), 72)
+    return () => clearTimeout(id)
+  }, [messages, loading, scrollToBottom])
+
+  /**
+   * If thinking unmounts without firing onExitComplete (very fast response),
+   * still commit the assistant message after a short window.
+   */
+  useEffect(() => {
+    if (loading) return
+    const next = assistantHandoffRef.current
+    if (!next) return
+    const t = window.setTimeout(() => {
+      if (assistantHandoffRef.current !== next) return
+      assistantHandoffRef.current = null
+      setMessages((prev) => [...prev, next])
+    }, 520)
+    return () => clearTimeout(t)
+  }, [loading])
 
   useEffect(() => {
     setSessionId(getOrCreateSession())
@@ -107,10 +192,6 @@ export default function DoorCheck() {
     }
   }
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, loading])
-
   async function submit() {
     const text = input.trim()
     if (!text || loading || concluded || !sessionId) return
@@ -118,7 +199,8 @@ export default function DoorCheck() {
     broadcastTyping(false)
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
 
-    setMessages((prev) => [...prev, { role: "user", content: text }])
+    const userId = crypto.randomUUID()
+    setMessages((prev) => [...prev, { id: userId, role: "user", content: text }])
     setInput("")
     setLoading(true)
 
@@ -130,7 +212,6 @@ export default function DoorCheck() {
         body: JSON.stringify({ message: text, sessionId, personaId }),
       })
 
-      // Stale session (concluded conversation) — reset and retry once
       if (res.status === 409) {
         const freshId = resetSession()
         setSessionId(freshId)
@@ -148,7 +229,11 @@ export default function DoorCheck() {
       if (!res.ok) throw new Error(`${res.status}`)
 
       const data = await res.json()
-      setMessages((prev) => [...prev, { role: "bot", content: data.message }])
+      assistantHandoffRef.current = {
+        id: crypto.randomUUID(),
+        role: "bot",
+        content: data.message,
+      }
 
       if (data.status === "passed") {
         setConcluded(true)
@@ -161,10 +246,11 @@ export default function DoorCheck() {
         setConcluded(true)
       }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", content: "Something went wrong." },
-      ])
+      assistantHandoffRef.current = {
+        id: crypto.randomUUID(),
+        role: "bot",
+        content: "Something went wrong.",
+      }
     } finally {
       setLoading(false)
     }
@@ -180,6 +266,7 @@ export default function DoorCheck() {
   function restart() {
     const newId = resetSession()
     localStorage.removeItem(SECRET_KEY)
+    assistantHandoffRef.current = null
     setSessionId(newId)
     setMessages(INITIAL_MESSAGES)
     setInput("")
@@ -188,104 +275,217 @@ export default function DoorCheck() {
     if (def) setSelectedPersonaId(def.id)
   }
 
+  const personaName =
+    personas.find((item) => item.id === selectedPersonaId)?.name ?? "Lou"
+
   return (
-    <div className="flex flex-col h-screen min-h-0">
-      {/* Messages */}
-      <div className="max-w-[1040px] w-[80%] mx-auto flex flex-1 min-h-0 overflow-y-auto scrollbar-hidden pt-[3rem] pb-[1rem] flex-col">
-        <div className="mt-auto flex flex-col gap-[1.25rem]">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`leading-[1.6] max-w-[65%] ${msg.role === "user" ? "self-end opacity-100" : "self-start opacity-70"}`}
-            >
-              {msg.role === "bot" ? (
-                <div className="text-md font-sans opacity-50">
-                  {personas.find((item) => item.id === selectedPersonaId)
-                    ?.name ?? "Lou"}
+    <MotionConfig
+      reducedMotion="user"
+      transition={{
+        type: "spring",
+        stiffness: 320,
+        damping: 30,
+      }}
+    >
+      <div className="flex h-screen min-h-0 flex-col">
+        <div
+          className="mx-auto flex w-[80%] max-w-[1040px] flex-1 min-h-0 flex-col overflow-y-auto pt-12 pb-4 scrollbar-hidden"
+          aria-busy={loading}
+          aria-live="polite"
+        >
+          <div className="mt-auto flex flex-col gap-5 pb-6">
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                layout
+                initial={{
+                  opacity: 0,
+                  y: 12,
+                  x: msg.role === "user" ? 14 : -14,
+                }}
+                animate={{ opacity: 1, y: 0, x: 0 }}
+                transition={{
+                  layout: LAYOUT_SPRING,
+                  opacity: { duration: 0.38, ease: EASE_OUT },
+                  y: {
+                    type: "spring",
+                    stiffness: 360,
+                    damping: 34,
+                    mass: 0.88,
+                  },
+                  x: {
+                    type: "spring",
+                    stiffness: 360,
+                    damping: 34,
+                    mass: 0.88,
+                  },
+                }}
+                className={cn(
+                  "max-w-[65%] leading-[1.6]",
+                  msg.role === "user" ? "self-end" : "self-start",
+                  msg.role === "user" ? "opacity-100" : "opacity-70",
+                )}
+              >
+                {msg.role === "bot" ? (
+                  <div className="font-sans text-md opacity-50">
+                    {personaName}
+                  </div>
+                ) : null}
+
+                <div className="font-sans text-lg leading-[1.6] md:text-2xl">
+                  {msg.content}
                 </div>
-              ) : null}
+              </motion.div>
+            ))}
 
-              <div className={`leading-[1.6] text-lg md:text-2xl font-sans`}>
-                {msg.content}
-              </div>
+            <div
+              className={cn(
+                "self-start w-full max-w-[65%]",
+                loading && "min-h-22 scroll-mt-8 md:min-h-26",
+              )}
+            >
+              <AnimatePresence
+                mode="wait"
+                initial={false}
+                onExitComplete={() => {
+                  const next = assistantHandoffRef.current
+                  assistantHandoffRef.current = null
+                  if (next) {
+                    setMessages((prev) => [...prev, next])
+                  }
+                }}
+              >
+                {loading ? (
+                  <motion.div
+                    key="thinking"
+                    layout
+                    variants={thinkingContainerVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    transition={{ layout: LAYOUT_SPRING }}
+                    className="w-full"
+                  >
+                    <motion.div
+                      variants={thinkingLineVariants}
+                      className="font-sans text-md opacity-50"
+                    >
+                      {personaName}
+                    </motion.div>
+                    <motion.div
+                      variants={thinkingLineVariants}
+                      className="font-sans text-lg md:text-xl"
+                    >
+                      <TextShimmer className="italic">Reading you.</TextShimmer>
+                    </motion.div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
-          ))}
 
-          {loading && (
-            <div className="self-start opacity-40">
-              <div className="text-md italic">Lou</div>
-              <div className="text-lg md:text-xl">_</div>
-            </div>
-          )}
-
-          <div ref={bottomRef} />
+            <div ref={bottomRef} className="h-8 w-full shrink-0" aria-hidden />
+          </div>
         </div>
-      </div>
 
-      {/* Reset */}
-      {concluded && (
-        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem] shrink-0">
-          <button
-            onClick={restart}
-            style={{
-              background: "transparent",
-              border: "none",
-              borderBottom: "1px solid rgba(255,255,255,0.15)",
-              color: "rgba(255,255,255,0.25)",
-              outline: "none",
-              padding: "0.5rem 0",
-              fontSize: "0.7rem",
-              fontFamily: "inherit",
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-            }}
+        {concluded && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.25 }}
+            className="mx-auto w-[80%] max-w-[1040px] shrink-0 pt-4 pb-20"
           >
-            start over
-          </button>
-        </div>
-      )}
-
-      {/* Input */}
-      {!concluded && (
-        <div className="max-w-[1040px] w-[80%] mx-auto pt-[1rem] pb-[5rem] shrink-0">
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            autoFocus
-            disabled={loading}
-            placeholder="Type your message"
-            className="shadow-xl shadow-muted bg-white rounded-xl py-3 px-5 w-full font-inherit text-black/90 text-lg font-[400] outline-none"
-          />
-          {messages.length === 1 && personas.length >= 1 && (
-            <select
-              value={selectedPersonaId}
-              onChange={(e) => setSelectedPersonaId(e.target.value)}
+            <button
+              type="button"
+              onClick={restart}
               style={{
-                display: "block",
-                marginTop: "0.75rem",
                 background: "transparent",
                 border: "none",
-                color: "rgba(255,255,255,0.3)",
+                borderBottom: "1px solid rgba(255,255,255,0.15)",
+                color: "rgba(255,255,255,0.25)",
                 outline: "none",
+                padding: "0.5rem 0",
                 fontSize: "0.7rem",
                 fontFamily: "inherit",
-                letterSpacing: "0.06em",
+                letterSpacing: "0.08em",
                 cursor: "pointer",
-                padding: 0,
               }}
             >
-              {personas.map((p) => (
-                <option key={p.id} value={p.id} style={{ background: "#000" }}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-      )}
-    </div>
+              start over
+            </button>
+          </motion.div>
+        )}
+
+        {!concluded && (
+          <motion.div
+            className="mx-auto w-[80%] max-w-[1040px] shrink-0 pt-4 pb-20"
+            animate={{ opacity: loading ? 0.72 : 1 }}
+            transition={{ duration: 0.22 }}
+          >
+            <div className="relative">
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                autoFocus
+                disabled={loading}
+                placeholder="Type your message"
+                aria-disabled={loading}
+                className="w-full rounded-2xl border border-white/10 bg-zinc-950/70 py-3.5 pl-5 pr-5 font-inherit text-lg font-normal text-white/95 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] outline-none backdrop-blur-md transition-[border-color,box-shadow,background-color,opacity] duration-200 placeholder:text-white/38 selection:bg-white/20 selection:text-white focus:border-white/18 focus:bg-zinc-950/85 focus:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_0_0_1px_rgba(255,255,255,0.06)] focus:ring-2 focus:ring-white/10 disabled:cursor-wait disabled:opacity-55"
+              />
+              <AnimatePresence>
+                {loading && (
+                  <motion.div
+                    key="input-bar"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="pointer-events-none absolute bottom-0 left-5 right-5 h-px overflow-hidden rounded-full bg-white/12"
+                  >
+                    <motion.div
+                      className="absolute top-0 h-full w-[38%] rounded-full bg-white/50"
+                      initial={{ left: "-38%" }}
+                      animate={{ left: ["-38%", "100%"] }}
+                      transition={{
+                        duration: 1.05,
+                        repeat: Infinity,
+                        ease: "linear",
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            {messages.length === 1 && personas.length >= 1 && (
+              <select
+                value={selectedPersonaId}
+                onChange={(e) => setSelectedPersonaId(e.target.value)}
+                style={{
+                  display: "block",
+                  marginTop: "0.75rem",
+                  background: "transparent",
+                  border: "none",
+                  color: "rgba(255,255,255,0.3)",
+                  outline: "none",
+                  fontSize: "0.7rem",
+                  fontFamily: "inherit",
+                  letterSpacing: "0.06em",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                {personas.map((p) => (
+                  <option key={p.id} value={p.id} style={{ background: "#000" }}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </motion.div>
+        )}
+      </div>
+    </MotionConfig>
   )
 }
