@@ -1,9 +1,9 @@
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Use gen_random_uuid() (built into Postgres 13+; Supabase local/cloud).
+-- Avoids uuid-ossp, which may be unavailable or restricted in some environments.
 
 -- Conversations table
 CREATE TABLE conversations (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'passed', 'failed', 'redirected')),
   redirect_reason TEXT,
@@ -16,7 +16,7 @@ CREATE INDEX idx_conversations_status ON conversations(status);
 
 -- Messages table
 CREATE TABLE messages (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('assistant', 'user')),
   content TEXT NOT NULL,
@@ -29,7 +29,7 @@ CREATE INDEX idx_messages_sent_at ON messages(sent_at DESC);
 
 -- Profiles table
 CREATE TABLE profiles (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT UNIQUE NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   metadata JSONB DEFAULT '{}'::jsonb
@@ -39,7 +39,7 @@ CREATE INDEX idx_profiles_email ON profiles(email);
 
 -- Profile eligibility table
 CREATE TABLE profile_eligibility (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
   conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
   granted_at TIMESTAMPTZ DEFAULT NOW(),

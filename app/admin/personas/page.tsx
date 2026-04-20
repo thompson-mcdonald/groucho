@@ -84,6 +84,7 @@ function fmt(n: number) {
 }
 
 export default function PersonasPage() {
+  const [sessionKind, setSessionKind] = useState<"platform" | "member" | null>(null)
   const [personas, setPersonas] = useState<Persona[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<"list" | "form">("list")
@@ -93,6 +94,16 @@ export default function PersonasPage() {
   const [saving, setSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const loadSession = useCallback(async () => {
+    const res = await fetch("/api/admin/session")
+    if (!res.ok) {
+      setSessionKind(null)
+      return
+    }
+    const j: { kind: string } = await res.json()
+    setSessionKind(j.kind === "platform" || j.kind === "member" ? j.kind : null)
+  }, [])
 
   const load = useCallback(async () => {
     const res = await fetch("/api/admin/personas")
@@ -104,8 +115,13 @@ export default function PersonasPage() {
   }, [])
 
   useEffect(() => {
+    void loadSession()
     load()
-  }, [load])
+  }, [load, loadSession])
+
+  useEffect(() => {
+    if (sessionKind === "member" && view === "form") setView("list")
+  }, [sessionKind, view])
 
   function openCreate() {
     setEditingId(null)
@@ -480,6 +496,12 @@ export default function PersonasPage() {
         </div>
       )}
 
+      {sessionKind === "member" && (
+        <p style={{ opacity: 0.4, fontSize: "0.78rem", marginBottom: "1.25rem", maxWidth: "36rem" }}>
+          Read-only: editing personas is restricted to platform operators.
+        </p>
+      )}
+
       <div
         style={{
           display: "flex",
@@ -493,9 +515,11 @@ export default function PersonasPage() {
         >
           personas: {personas.length}
         </span>
-        <button onClick={openCreate} style={btnStyle(true)}>
-          new persona
-        </button>
+        {sessionKind === "platform" && (
+          <button onClick={openCreate} style={btnStyle(true)}>
+            new persona
+          </button>
+        )}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
@@ -555,45 +579,48 @@ export default function PersonasPage() {
               {new Date(p.created_at).toLocaleDateString()}
             </span>
 
-            <button onClick={() => openEdit(p)} style={btnStyle(false)}>
-              edit
-            </button>
-
-            {deleteConfirm === p.id ? (
-              <div
-                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-              >
-                <span style={{ fontSize: "0.7rem", opacity: 0.5 }}>
-                  confirm delete?
-                </span>
-                <button
-                  onClick={() => handleDelete(p.id)}
-                  style={{
-                    ...btnStyle(false),
-                    color: "#f87171",
-                    borderColor: "rgba(248,113,113,0.3)",
-                  }}
-                >
-                  yes
-                </button>
-                <button
-                  onClick={() => setDeleteConfirm(null)}
-                  style={btnStyle(false)}
-                >
-                  no
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  setDeleteConfirm(p.id)
-                  setError(null)
-                }}
-                style={{ ...btnStyle(false), opacity: 0.3 }}
-              >
-                delete
+            {sessionKind === "platform" && (
+              <button onClick={() => openEdit(p)} style={btnStyle(false)}>
+                edit
               </button>
             )}
+
+            {sessionKind === "platform" &&
+              (deleteConfirm === p.id ? (
+                <div
+                  style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+                >
+                  <span style={{ fontSize: "0.7rem", opacity: 0.5 }}>
+                    confirm delete?
+                  </span>
+                  <button
+                    onClick={() => handleDelete(p.id)}
+                    style={{
+                      ...btnStyle(false),
+                      color: "#f87171",
+                      borderColor: "rgba(248,113,113,0.3)",
+                    }}
+                  >
+                    yes
+                  </button>
+                  <button
+                    onClick={() => setDeleteConfirm(null)}
+                    style={btnStyle(false)}
+                  >
+                    no
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setDeleteConfirm(p.id)
+                    setError(null)
+                  }}
+                  style={{ ...btnStyle(false), opacity: 0.3 }}
+                >
+                  delete
+                </button>
+              ))}
           </div>
         ))}
       </div>

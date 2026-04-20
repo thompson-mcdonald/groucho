@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
 import { scoreMessage, type ConversationMessage } from "@/lib/scoring"
+import {
+  resolveProjectContext,
+  touchApiKeyLastUsed,
+} from "@/lib/project-resolution"
 import { supabase } from "@/lib/supabase"
 
 const client = new Anthropic()
@@ -97,7 +101,7 @@ REDIRECT when the person is genuine but doesn't understand what's at stake — m
 REJECTED when the person's values or presence would actively harm the space — extractive, commodifying, treating access as the point.`
 
 // The opening exchange is injected into every Claude call as fixed context.
-// It is not persisted to the DB — the conversation row is only created on the
+// It is not persisted to the DB — the `sessions` row is only created on the
 // first user message, keeping DB writes tied to real user activity.
 const OPENING: Anthropic.MessageParam = {
   role: "assistant",
@@ -118,6 +122,19 @@ export async function POST(req: NextRequest) {
       { error: "Missing required fields" },
       { status: 400 },
     )
+  }
+
+  const projectResolved = await resolveProjectContext(
+    req.headers.get("authorization"),
+  )
+  if (!projectResolved.ok) {
+    return NextResponse.json(projectResolved.body, {
+      status: projectResolved.status,
+    })
+  }
+  const { organisationId, projectId, apiKeyId } = projectResolved.context
+  if (apiKeyId) {
+    touchApiKeyLastUsed(apiKeyId)
   }
 
   // Fetch the requested persona (if provided) or fall back to the default active one
@@ -153,44 +170,52 @@ export async function POST(req: NextRequest) {
   const passThreshold: number = defaultPersona?.pass_threshold ?? 0.65
   const rejectThreshold: number = defaultPersona?.reject_threshold ?? 0.25
 
-  // 1. Create or fetch conversation
-  let conversationId: string
+  // 1. Create or fetch session row (`sessions.id` is internal; `sessions.session_id` is the client key).
+  let sessionRowId: string
 
   const { data: existing } = await supabase
-    .from("conversations")
+    .from("sessions")
     .select("id, status")
     .eq("session_id", sessionId)
-    .single()
+    .eq("project_id", projectId)
+    .maybeSingle()
 
   if (existing) {
     if (
       ["passed", "failed", "redirected", "rejected"].includes(existing.status)
     ) {
       return NextResponse.json(
-        { error: "Conversation concluded" },
+        { error: "Session concluded" },
         { status: 409 },
       )
     }
-    conversationId = existing.id
+    sessionRowId = existing.id
   } else {
     const { data: created, error: createError } = await supabase
-      .from("conversations")
-      .insert({ session_id: sessionId, persona_id: resolvedPersonaId })
+      .from("sessions")
+      .insert({
+        session_id: sessionId,
+        persona_id: resolvedPersonaId,
+        organisation_id: organisationId,
+        project_id: projectId,
+      })
       .select("id")
       .single()
 
     if (createError || !created) {
-      console.error("Failed to create conversation:", createError)
+      console.error("Failed to create session:", createError)
       return NextResponse.json({ error: "Database error" }, { status: 500 })
     }
-    conversationId = created.id
+    sessionRowId = created.id
   }
 
   // 2. Save user message
   const { data: userMsg, error: userMsgError } = await supabase
     .from("messages")
     .insert({
-      conversation_id: conversationId,
+      session_id: sessionRowId,
+      organisation_id: organisationId,
+      project_id: projectId,
       role: "user",
       content: message.trim(),
     })
@@ -202,11 +227,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Database error" }, { status: 500 })
   }
 
-  // 3. Fetch full conversation history (now includes the message we just saved)
+  // 3. Fetch full transcript (now includes the message we just saved)
   const { data: history } = await supabase
     .from("messages")
     .select("role, content")
-    .eq("conversation_id", conversationId)
+    .eq("session_id", sessionRowId)
     .order("sent_at", { ascending: true })
 
   const dbHistory: ConversationMessage[] = (history ?? []).map((m) => ({
@@ -254,7 +279,9 @@ export async function POST(req: NextRequest) {
 
   // 8. Save assistant message
   const { error: asstError } = await supabase.from("messages").insert({
-    conversation_id: conversationId,
+    session_id: sessionRowId,
+    organisation_id: organisationId,
+    project_id: projectId,
     role: "assistant",
     content: assistantContent,
   })
@@ -264,7 +291,7 @@ export async function POST(req: NextRequest) {
     // Non-fatal — response still goes to the user
   }
 
-  // 9. Resolve pass / fail and update conversation status.
+  // 9. Resolve pass / fail and update session status.
   //    Claude's terminal response triggers evaluation; the overall score against
   //    the persona's thresholds determines the actual outcome.
   //    - "Yeah. Here." passes only if score >= passThreshold (else redirect)
@@ -283,14 +310,14 @@ export async function POST(req: NextRequest) {
   if (status === "passed") {
     successSecret = randomUUID()
     await supabase
-      .from("conversations")
+      .from("sessions")
       .update({ status, success_secret: successSecret })
-      .eq("id", conversationId)
+      .eq("id", sessionRowId)
   } else if (status !== null) {
     await supabase
-      .from("conversations")
+      .from("sessions")
       .update({ status })
-      .eq("id", conversationId)
+      .eq("id", sessionRowId)
   }
 
   return NextResponse.json({

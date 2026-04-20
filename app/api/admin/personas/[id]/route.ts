@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
+import { resolveAdminActor } from "@/lib/admin-actor"
+import { requirePlatform, unauthorized } from "@/lib/org-access"
 import { supabase } from "@/lib/supabase"
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const actor = await resolveAdminActor()
+  if (!actor) return unauthorized()
+  const deny = await requirePlatform(actor)
+  if (deny) return deny
+
   const { id } = await params
 
   let body: {
@@ -71,17 +78,22 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const actor = await resolveAdminActor()
+  if (!actor) return unauthorized()
+  const deny = await requirePlatform(actor)
+  if (deny) return deny
+
   const { id } = await params
 
   const { count } = await supabase
-    .from("conversations")
+    .from("sessions")
     .select("id", { count: "exact", head: true })
     .eq("persona_id", id)
 
   if (count && count > 0) {
     return NextResponse.json(
       {
-        error: `Cannot delete: this persona has ${count} associated conversation${count === 1 ? "" : "s"}.`,
+        error: `Cannot delete: this persona has ${count} associated session${count === 1 ? "" : "s"}.`,
       },
       { status: 409 }
     )

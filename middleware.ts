@@ -1,31 +1,23 @@
+import { createServerClient, type CookieOptions } from "@supabase/ssr"
 import { NextRequest, NextResponse } from "next/server"
+import { verifyPeAuthEmail, isAllowedPlatformEmail } from "@/lib/pe-auth"
 
-const PUBLIC_PATHS = ["/login", "/api/auth/"]
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/",
+  "/invite",
+  "/api/invitations/",
+  "/signup",
+  "/api/organisations/signup",
+  "/api/me/",
+]
 const STATIC_PREFIXES = ["/_next/", "/favicon.ico"]
 
-async function verifyToken(token: string, secret: string): Promise<string | null> {
-  try {
-    const [payloadB64, sigB64] = token.split(".")
-    if (!payloadB64 || !sigB64) return null
-
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"]
-    )
-
-    const sigBytes = Uint8Array.from(atob(sigB64.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0))
-    const valid = await crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(payloadB64))
-    if (!valid) return null
-
-    const payload = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"))
-    const [email] = payload.split("|")
-    return email || null
-  } catch {
-    return null
+function authFailure(req: NextRequest) {
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
+  return NextResponse.redirect(new URL("/login", req.url))
 }
 
 export async function middleware(req: NextRequest) {
@@ -34,33 +26,49 @@ export async function middleware(req: NextRequest) {
   if (STATIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next()
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return NextResponse.next()
 
-  const token = req.cookies.get("pe_auth")?.value
   const secret = process.env.AUTH_SECRET
-
   if (!secret) {
     console.error("AUTH_SECRET env var is not set")
-    return NextResponse.redirect(new URL("/login", req.url))
+    return authFailure(req)
   }
 
-  if (!token) {
-    return NextResponse.redirect(new URL("/login", req.url))
+  const token = req.cookies.get("pe_auth")?.value
+  if (token) {
+    const email = await verifyPeAuthEmail(token, secret)
+    if (email && isAllowedPlatformEmail(email)) {
+      return NextResponse.next()
+    }
   }
 
-  const email = await verifyToken(token, secret)
-  if (!email) {
-    return NextResponse.redirect(new URL("/login", req.url))
+  let res = NextResponse.next({ request: { headers: req.headers } })
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (url && anon) {
+    const supabase = createServerClient(url, anon, {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll()
+        },
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
+          cookiesToSet.forEach(({ name, value, options }) => res.cookies.set(name, value, options))
+        },
+      },
+    })
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (user) {
+      return res
+    }
   }
 
-  const allowed = (process.env.ALLOWED_EMAILS || "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-  if (!allowed.includes(email.toLowerCase())) {
-    const res = NextResponse.redirect(new URL("/login", req.url))
-    res.cookies.delete("pe_auth")
-    return res
+  if (token) {
+    const clear = authFailure(req)
+    clear.cookies.delete("pe_auth")
+    return clear
   }
 
-  return NextResponse.next()
+  return authFailure(req)
 }
 
 export const config = {

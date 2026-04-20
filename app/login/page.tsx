@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 
@@ -79,6 +80,22 @@ export default function LoginPage() {
             {loading ? "..." : "Enter"}
           </button>
         </form>
+        <p className="mt-8 text-center text-sm opacity-40 space-y-2 flex flex-col">
+          <Link href="/signup/organisation" className="text-white/50 hover:text-white/70 underline-offset-4 hover:underline">
+            Create an organisation (email code, no invite)
+          </Link>
+          <span className="text-white/35 text-xs">
+            Organisation members: complete the email code on your invite or{" "}
+            <Link href="/signup/organisation" className="text-white/45 hover:text-white/65">
+              /signup/organisation
+            </Link>
+            , then open{" "}
+            <Link href="/admin/organisations" className="text-white/45 hover:text-white/65">
+              /admin/organisations
+            </Link>
+            .
+          </span>
+        </p>
       </div>
     </div>
   )

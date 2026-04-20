@@ -1,0 +1,247 @@
+openapi: 3.1.0
+info:
+  title: Groucho Project API
+  version: 0.1.0
+  description: |
+    Public HTTP API for gatekeeper sessions. **Project scope** is resolved from the
+    `Authorization: Bearer gk_*` API key.
+
+    Behaviour is aligned with the reference implementation in `POST /api/chat`
+    ([app/api/chat/route.ts](../../app/api/chat/route.ts)): client-supplied opaque
+    `sessionId`, first user message creates the server session, scoring is applied
+    to each user turn, assistant reply may conclude the session.
+
+servers:
+  - url: https://api.groucho.example.com
+    description: Production (placeholder host)
+  - url: http://localhost:3000
+    description: Local reference (Next.js demo maps to `/api/chat` today — v1 will mount under `/v1`)
+
+tags:
+  - name: Sessions
+    description: Chat turns and outcomes
+  - name: Access
+    description: Post-pass email capture
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/sessions/{sessionId}/messages:
+    post:
+      tags: [Sessions]
+      summary: Send a user message and receive the assistant reply
+      description: |
+        Idempotent session binding: the first successful call for a new
+        `sessionId` creates a session row; subsequent calls append messages.
+
+        If the session is already **concluded** (pass / redirect / reject), returns **409**.
+      operationId: postSessionMessage
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          description: Opaque client-generated session identifier (UUID recommended).
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostMessageRequest"
+            examples:
+              default:
+                value:
+                  message: "Hey."
+                  personaId: null
+      responses:
+        "200":
+          description: Assistant reply and session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostMessageResponse"
+        "400":
+          description: Invalid body or missing fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid API key
+        "409":
+          description: Session already concluded — client should start a new session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Upstream scorer or LLM unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      summary: Get session metadata and latest outcome (optional v1)
+      operationId: getSession
+      parameters:
+        - $ref: "#/components/parameters/sessionId"
+      responses:
+        "200":
+          description: Session record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Unknown session for this project
+
+  /v1/sessions/{sessionId}/access:
+    post:
+      tags: [Access]
+      summary: Submit email after a passed session
+      description: |
+        Aligns with [app/api/access/route.ts](../../app/api/access/route.ts):
+        server verifies pass eligibility (e.g. success secret or server-held token)
+        before upserting profile. **Must not** leak whether email already exists.
+      operationId: postSessionAccess
+      parameters:
+        - $ref: "#/components/parameters/sessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                secret:
+                  type: string
+                  description: One-time pass secret issued with the terminal pass response (if applicable)
+      responses:
+        "200":
+          description: Accepted
+        "400":
+          description: Invalid email or missing secret
+        "403":
+          description: Session not eligible for email capture
+        "429":
+          description: Rate limited
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: gk_live_ or gk_test_
+
+  parameters:
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    PostMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: User message for this turn
+          minLength: 1
+          maxLength: 8000
+        personaId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional persona override; must belong to the same project and be active.
+
+    ScoreBreakdown:
+      type: object
+      required: [specificity, authenticity, cultural_depth, overall]
+      properties:
+        specificity:
+          type: number
+          minimum: 0
+          maximum: 1
+        authenticity:
+          type: number
+          minimum: 0
+          maximum: 1
+        cultural_depth:
+          type: number
+          minimum: 0
+          maximum: 1
+        overall:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    SessionOutcome:
+      type: string
+      description: Normalised outcome after thresholds (see chat route)
+      enum:
+        - active
+        - passed
+        - redirected
+        - rejected
+
+    PostMessageResponse:
+      type: object
+      required: [message, status, scores]
+      properties:
+        message:
+          type: string
+          description: Raw assistant text for this turn (may include terminal tokens)
+        status:
+          $ref: "#/components/schemas/SessionOutcome"
+        scores:
+          $ref: "#/components/schemas/ScoreBreakdown"
+        secret:
+          type: string
+          format: uuid
+          description: Present only when `status` is `passed` and access gating requires a secret
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        clientSessionKey:
+          type: string
+          description: Same as path `sessionId`
+        status:
+          $ref: "#/components/schemas/SessionOutcome"
+        outcome:
+          type: string
+          enum: [PASS, REDIRECT, REJECT]
+          nullable: true
+          description: Set when session completes; may mirror normalised `status`
+        turnsUsed:
+          type: integer
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string

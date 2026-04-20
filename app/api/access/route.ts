@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { getDefaultProjectId } from "@/lib/project-resolution"
 import { supabase } from "@/lib/supabase"
 
 export async function GET(req: NextRequest) {
@@ -10,11 +11,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ authorized: false }, { status: 400 })
   }
 
+  const project = await getDefaultProjectId()
+  if (!project.ok) {
+    return NextResponse.json({ authorized: false }, { status: 503 })
+  }
+
   const { data } = await supabase
-    .from("conversations")
+    .from("sessions")
     .select("status, success_secret")
     .eq("session_id", sid)
-    .single()
+    .eq("project_id", project.projectId)
+    .maybeSingle()
 
   const authorized =
     data?.status === "passed" && data?.success_secret === secret

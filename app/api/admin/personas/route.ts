@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
+import { resolveAdminActor } from "@/lib/admin-actor"
+import { requirePersonasReader, requirePlatform, unauthorized } from "@/lib/org-access"
 import { supabase } from "@/lib/supabase"
 
 export async function GET() {
+  const actor = await resolveAdminActor()
+  if (!actor) return unauthorized()
+  const deny = await requirePersonasReader(actor)
+  if (deny) return deny
+
   const { data, error } = await supabase
     .from("personas")
     .select("*")
@@ -15,6 +22,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const actor = await resolveAdminActor()
+  if (!actor) return unauthorized()
+  const deny = await requirePlatform(actor)
+  if (deny) return deny
+
   let body: {
     name: string
     slug: string
@@ -34,15 +46,12 @@ export async function POST(req: NextRequest) {
   if (!name?.trim() || !slug?.trim() || !prompt?.trim()) {
     return NextResponse.json(
       { error: "Name, slug, and prompt are required." },
-      { status: 400 }
+      { status: 400 },
     )
   }
 
   if (is_default) {
-    await supabase
-      .from("personas")
-      .update({ is_default: false })
-      .eq("is_default", true)
+    await supabase.from("personas").update({ is_default: false }).eq("is_default", true)
   }
 
   const { data, error } = await supabase
@@ -63,7 +72,7 @@ export async function POST(req: NextRequest) {
     if (error.code === "23505") {
       return NextResponse.json(
         { error: "A persona with that slug already exists." },
-        { status: 409 }
+        { status: 409 },
       )
     }
     return NextResponse.json({ error: "Database error" }, { status: 500 })

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback } from "react"
-import { createClient } from "@supabase/supabase-js"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 
 type Score = {
   specificity: number
@@ -12,17 +12,19 @@ type Score = {
 
 type Message = {
   id: string
-  conversation_id: string
+  /** FK to `sessions.id` (internal row id). */
+  session_id: string
   role: "user" | "assistant"
   content: string
   sent_at: string
   metadata: { scores?: Score } | null
 }
 
-type Conversation = {
+type LiveSession = {
   id: string
+  /** Client opaque key (`sessions.session_id`). */
   session_id: string
-  status: "active" | "passed" | "failed" | "redirected"
+  status: "active" | "passed" | "failed" | "redirected" | "rejected"
   created_at: string
   updated_at: string
   messages: Message[]
@@ -38,17 +40,6 @@ const STATUS_COLOR: Record<string, string> = {
 
 const FILTERS = ["all", "active", "passed", "redirected", "rejected", "failed"] as const
 
-// Created at module level so it's not recreated on render
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  {
-    realtime: {
-      params: { apikey: process.env.NEXT_PUBLIC_SUPABASE_REALTIME_KEY! },
-    },
-  }
-)
-
 function parseMetadata(raw: unknown): Message["metadata"] {
   if (!raw) return null
   if (typeof raw === "string") {
@@ -58,7 +49,9 @@ function parseMetadata(raw: unknown): Message["metadata"] {
 }
 
 export default function LiveConversations() {
-  const [conversations, setConversations] = useState<Conversation[]>([])
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
+
+  const [sessions, setSessions] = useState<LiveSession[]>([])
   const [filter, setFilter] = useState<string>("all")
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState("")
@@ -66,31 +59,31 @@ export default function LiveConversations() {
 
   const load = useCallback(async () => {
     const { data: convs } = await supabase
-      .from("conversations")
+      .from("sessions")
       .select("id, session_id, status, created_at, updated_at")
       .order("created_at", { ascending: false })
 
     if (!convs?.length) {
-      setConversations([])
+      setSessions([])
       return
     }
 
     const { data: msgs } = await supabase
       .from("messages")
-      .select("id, conversation_id, role, content, sent_at, metadata")
+      .select("id, session_id, role, content, sent_at, metadata")
       .in(
-        "conversation_id",
+        "session_id",
         convs.map((c) => c.id)
       )
       .order("sent_at", { ascending: true })
 
-    const byConv = (msgs ?? []).reduce<Record<string, Message[]>>((acc, m) => {
-      ;(acc[m.conversation_id] ??= []).push(m)
+    const bySession = (msgs ?? []).reduce<Record<string, Message[]>>((acc, m) => {
+      ;(acc[m.session_id] ??= []).push(m)
       return acc
     }, {})
 
-    setConversations(
-      convs.map((c) => ({ ...c, messages: byConv[c.id] ?? [] }))
+    setSessions(
+      convs.map((c) => ({ ...c, messages: bySession[c.id] ?? [] }))
     )
   }, [])
 
@@ -116,18 +109,18 @@ export default function LiveConversations() {
       .channel("admin-live")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "conversations" },
+        { event: "INSERT", schema: "public", table: "sessions" },
         load
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "conversations" },
+        { event: "UPDATE", schema: "public", table: "sessions" },
         ({ new: raw }) => {
           const updated = raw as Record<string, unknown>
-          setConversations((prev) =>
+          setSessions((prev) =>
             prev.map((c) =>
               c.id === updated.id
-                ? { ...c, status: updated.status as Conversation["status"], updated_at: updated.updated_at as string }
+                ? { ...c, status: updated.status as LiveSession["status"], updated_at: updated.updated_at as string }
                 : c
             )
           )
@@ -140,15 +133,15 @@ export default function LiveConversations() {
           const r = raw as Record<string, unknown>
           const newMsg: Message = {
             id: r.id as string,
-            conversation_id: r.conversation_id as string,
+            session_id: r.session_id as string,
             role: r.role as Message["role"],
             content: r.content as string,
             sent_at: r.sent_at as string,
             metadata: parseMetadata(r.metadata),
           }
-          setConversations((prev) =>
+          setSessions((prev) =>
             prev.map((c) =>
-              c.id === newMsg.conversation_id
+              c.id === newMsg.session_id
                 ? { ...c, messages: [...c.messages, newMsg] }
                 : c
             )
@@ -162,15 +155,15 @@ export default function LiveConversations() {
           const r = raw as Record<string, unknown>
           const updatedMsg: Message = {
             id: r.id as string,
-            conversation_id: r.conversation_id as string,
+            session_id: r.session_id as string,
             role: r.role as Message["role"],
             content: r.content as string,
             sent_at: r.sent_at as string,
             metadata: parseMetadata(r.metadata),
           }
-          setConversations((prev) =>
+          setSessions((prev) =>
             prev.map((c) =>
-              c.id === updatedMsg.conversation_id
+              c.id === updatedMsg.session_id
                 ? { ...c, messages: c.messages.map((m) => m.id === updatedMsg.id ? updatedMsg : m) }
                 : c
             )
@@ -204,15 +197,15 @@ export default function LiveConversations() {
   }, [load])
 
   const stats = useMemo(() => {
-    const total = conversations.length
-    const passed = conversations.filter((c) => c.status === "passed").length
-    const concluded = conversations.filter((c) =>
+    const total = sessions.length
+    const passed = sessions.filter((c) => c.status === "passed").length
+    const concluded = sessions.filter((c) =>
       ["passed", "redirected", "rejected"].includes(c.status)
     ).length
     const passRate =
       concluded > 0 ? Math.round((passed / concluded) * 100) : null
 
-    const allOverall = conversations.flatMap((c) =>
+    const allOverall = sessions.flatMap((c) =>
       c.messages
         .filter((m) => m.metadata?.scores)
         .map((m) => m.metadata!.scores!.overall)
@@ -225,17 +218,17 @@ export default function LiveConversations() {
         : null
 
     return { total, passRate, avgScore }
-  }, [conversations])
+  }, [sessions])
 
   const visible = useMemo(
     () =>
-      conversations.filter((c) => {
+      sessions.filter((c) => {
         if (filter !== "all" && c.status !== filter) return false
         if (search && !c.session_id.toLowerCase().includes(search.toLowerCase()))
           return false
         return true
       }),
-    [conversations, filter, search]
+    [sessions, filter, search]
   )
 
   function toggle(id: string) {
@@ -254,7 +247,7 @@ export default function LiveConversations() {
       "message_count",
       "avg_overall_score",
     ]
-    const rows = conversations.map((c) => {
+    const rows = sessions.map((c) => {
       const scores = c.messages
         .filter((m) => m.metadata?.scores)
         .map((m) => m.metadata!.scores!.overall)
@@ -269,7 +262,7 @@ export default function LiveConversations() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = "pe-conversations.csv"
+    a.download = "pe-sessions.csv"
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -294,7 +287,7 @@ export default function LiveConversations() {
           fontFamily: "monospace",
         }}
       >
-        <span>conversations: {stats.total}</span>
+        <span>sessions: {stats.total}</span>
         <span>pass rate: {stats.passRate !== null ? `${stats.passRate}%` : "—"}</span>
         <span>avg score: {stats.avgScore ?? "—"}</span>
       </div>
@@ -373,7 +366,7 @@ export default function LiveConversations() {
       <div style={{ display: "flex", flexDirection: "column" }}>
         {visible.length === 0 && (
           <div style={{ opacity: 0.2, fontSize: "0.8rem" }}>
-            No conversations.
+            No sessions.
           </div>
         )}
 
