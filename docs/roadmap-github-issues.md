@@ -76,15 +76,15 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 5 — `@groucho/sdk` v1
+## Phase 5 — `@groucho/sdk` v1 — **in progress**
 
-| Title | Type | Description |
-|-------|------|---------------|
-| Monorepo: `packages/sdk` scaffold | chore | tsup or unbuild; exports map from [sdk-surface.md](./sdk-surface.md). |
-| Implement `createClient` + types from OpenAPI | feature | `openapi-typescript` codegen in CI. |
-| Implement `Gatekeeper` + primitives | feature | Dark theme tokens; a11y baseline. |
-| Example: `examples/next-groucho` with proxy route | docs | Implements ADR-0001 default pattern. |
-| Publish npm (private or public) | chore | Changesets or semantic-release. |
+| Title | Type | Status | Description |
+|-------|------|--------|-------------|
+| Monorepo: `packages/sdk` scaffold | chore | done | npm workspaces; `packages/sdk` with `tsup`, exports for `.`, `./react`, `./server`, `./groucho.css`. |
+| Implement `createClient` + types from OpenAPI | feature | done | `openapi-typescript` → `src/generated/openapi.ts`; `createClient`, `GrouchoApiError`, `createServerClient` in `./server`. |
+| Implement `Gatekeeper` + primitives | feature | done | `GrouchoProvider`, `Gatekeeper`, `Transcript`, `Composer`, `OutcomeBanner`, `ThinkingIndicator`; default dark tokens in `styles/groucho.css`. |
+| Example: `examples/next-groucho` with proxy route | docs | done | `GET/POST /api/groucho/[...path]` forwards with `GROUPCHO_API_KEY`; local `middleware.ts` so the example does not inherit repo-root auth middleware. |
+| Publish npm (private or public) | chore | pending | Changesets or semantic-release (not wired). |
 
 **Depends on:** Phase 3 OpenAPI stable (can stub until then).  
 **Parallel with:** Phase 4 optional.

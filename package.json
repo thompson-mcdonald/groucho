@@ -2,12 +2,19 @@
   "name": "groucho",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sdk:codegen": "npm run codegen -w @groucho/sdk",
+    "sdk:build": "npm run build -w @groucho/sdk",
+    "example:groucho": "npm run dev -w next-groucho-example"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.77.0",
