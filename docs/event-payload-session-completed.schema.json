@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groucho.dev/schemas/session.completed.v1.json",
+  "title": "session.completed (verdict) v1",
+  "description": "Delivered as the JSON body of POST webhook requests when a gatekeeper session reaches a terminal state. Verify X-Groucho-Signature: sha256=<hex> over the raw body bytes using the webhook signing secret.",
+  "type": "object",
+  "required": ["event", "id", "occurred_at", "project", "session", "outcome"],
+  "properties": {
+    "event": {
+      "const": "session.completed"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Verdict row id (same as payload id)."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "organisation_id"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "organisation_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["client_session_key", "internal_id", "status"],
+      "properties": {
+        "client_session_key": { "type": "string", "description": "Opaque session id from the client API" },
+        "internal_id": { "type": "string", "format": "uuid", "description": "sessions.id" },
+        "status": {
+          "type": "string",
+          "enum": ["passed", "redirected", "rejected"]
+        }
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["PASS", "REDIRECT", "REJECT"]
+    },
+    "scores": {
+      "type": "object",
+      "properties": {
+        "specificity": { "type": "number" },
+        "authenticity": { "type": "number" },
+        "cultural_depth": { "type": "number" },
+        "overall": { "type": "number" }
+      }
+    }
+  }
+}

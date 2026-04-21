@@ -48,13 +48,13 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 3 — Public project API
+## Phase 3 — Public project API — **in progress**
 
-| Title | Type | Description |
-|-------|------|---------------|
-| Mount OpenAPI contract under `/v1` | feature | Implement paths in [api/openapi.yaml](./api/openapi.yaml); redirect or duplicate `/api/chat` during transition. |
-| Contract tests: PostMessage 200/409/503 | test | Golden files for scorer/LLM mocked. |
-| Rate limit: per API key + per session | feature | Edge middleware or Upstash; document limits in PRD appendix. |
+| Title | Type | Status | Description |
+|-------|------|--------|-------------|
+| Mount OpenAPI contract under `/v1` | feature | done | **`POST /v1/sessions/{sessionId}/messages`**, **`GET /v1/sessions/{sessionId}`**, **`POST /v1/sessions/{sessionId}/access`** ([docs/api/openapi.yaml](./api/openapi.yaml)). Shared handler [`lib/post-session-message.ts`](../lib/post-session-message.ts); `POST /api/chat` unchanged. Middleware allows `/v1/`. |
+| Contract tests: PostMessage 200/409/503 | test | done | `vitest` module-mocked contract tests: `lib/__tests__/contract-post-message.test.ts` (200/409/503 + 429). |
+| Rate limit: per API key + per session | feature | done | Lightweight in-memory limiter in `lib/rate-limit.ts` enforced by `lib/post-session-message.ts` (per api key + per project/session) and `/v1/.../access` (429 + `Retry-After`). Env: `GROUCHO_RL_API_KEY_PER_MINUTE`, `GROUCHO_RL_SESSION_PER_MINUTE`. |
 | Normalise outcome enum PASS/REDIRECT/REJECT | chore | Single mapper from model strings + thresholds. |
 
 **Depends on:** Phase 1 key resolution.  
@@ -62,14 +62,14 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 4 — Webhooks + verdicts
+## Phase 4 — Webhooks + verdicts — **in progress**
 
-| Title | Type | Description |
-|-------|------|---------------|
-| Migration: webhooks + verdicts tables | feature | As PRD schema; link `verdicts.session_id`. |
-| Worker: deliver webhook with HMAC + retries | feature | Update `webhook_status`, exponential backoff, dead-letter after N tries. |
-| UI: webhook CRUD under project | feature | Secret show-once; test delivery button. |
-| Event payload schema v1 | docs | JSON Schema for `session.completed` / `verdict.created`. |
+| Title | Type | Status | Description |
+|-------|------|--------|-------------|
+| Migration: webhooks + verdicts tables | feature | done | `20260422120000_phase4_webhooks_verdicts.sql` — `webhooks`, `verdicts` (one per session), `webhook_deliveries`; service_role grants; HTTPS URL check. |
+| Worker: deliver webhook with HMAC + retries | feature | done | `lib/verdict-webhook.ts` — HMAC-SHA256 body signature, `GET /api/cron/webhook-deliveries` + `CRON_SECRET` drains pending queue with backoff + max attempts. |
+| UI: webhook CRUD under project | feature | done | Org project panel: list, add (secret once), toggle active, rotate secret, test ping, delete; admin API under `/api/admin/.../projects/[projectId]/webhooks`. |
+| Event payload schema v1 | docs | done | [event-payload-session-completed.schema.json](./event-payload-session-completed.schema.json) for `session.completed`. |
 
 **Depends on:** Phase 3 session completion path emits verdict row.  
 **Blocks:** Phase 6 hardening (partially).

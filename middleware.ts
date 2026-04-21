@@ -5,16 +5,19 @@ import { verifyPeAuthEmail, isAllowedPlatformEmail } from "@/lib/pe-auth"
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/",
+  "/api/cron/",
   "/invite",
   "/api/invitations/",
   "/signup",
   "/api/organisations/signup",
   "/api/me/",
+  "/v1/",
 ]
 const STATIC_PREFIXES = ["/_next/", "/favicon.ico"]
 
 function authFailure(req: NextRequest) {
-  if (req.nextUrl.pathname.startsWith("/api/")) {
+  const { pathname } = req.nextUrl
+  if (pathname.startsWith("/api/") || pathname.startsWith("/v1/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
   return NextResponse.redirect(new URL("/login", req.url))

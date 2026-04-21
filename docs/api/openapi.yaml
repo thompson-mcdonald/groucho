@@ -15,7 +15,7 @@ servers:
   - url: https://api.groucho.example.com
     description: Production (placeholder host)
   - url: http://localhost:3000
-    description: Local reference (Next.js demo maps to `/api/chat` today — v1 will mount under `/v1`)
+    description: Local Next.js — Project API under `/v1`; legacy chat remains at `POST /api/chat`
 
 tags:
   - name: Sessions

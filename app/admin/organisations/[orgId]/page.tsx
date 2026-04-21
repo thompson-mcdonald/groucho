@@ -30,6 +30,15 @@ type ApiKeyRow = {
   revoked_at: string | null
 }
 
+type WebhookRow = {
+  id: string
+  label: string | null
+  url: string
+  events: string[]
+  active: boolean
+  created_at: string
+}
+
 type MemberRow = {
   id: string
   user_id: string
@@ -121,6 +130,10 @@ export default function OrganisationDetailPage() {
   const [projSlugManual, setProjSlugManual] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [keys, setKeys] = useState<ApiKeyRow[]>([])
+  const [webhooks, setWebhooks] = useState<WebhookRow[]>([])
+  const [whUrl, setWhUrl] = useState("")
+  const [whLabel, setWhLabel] = useState("")
+  const [revealedWebhookSecret, setRevealedWebhookSecret] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [sessionTotal, setSessionTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -215,6 +228,17 @@ export default function OrganisationDetailPage() {
     if (res.ok) setKeys(await res.json())
   }, [orgId, selectedProjectId])
 
+  const loadWebhooks = useCallback(async () => {
+    if (!selectedProjectId) {
+      setWebhooks([])
+      return
+    }
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks`,
+    )
+    if (res.ok) setWebhooks(await res.json())
+  }, [orgId, selectedProjectId])
+
   const loadSessions = useCallback(async () => {
     if (!selectedProjectId) {
       setSessions([])
@@ -241,8 +265,9 @@ export default function OrganisationDetailPage() {
 
   useEffect(() => {
     void loadKeys()
+    void loadWebhooks()
     void loadSessions()
-  }, [loadKeys, loadSessions])
+  }, [loadKeys, loadWebhooks, loadSessions])
 
   useEffect(() => {
     setSelectedSessionId(null)
@@ -377,6 +402,109 @@ export default function OrganisationDetailPage() {
     }
     if (b.secret) setRevealedSecret(b.secret)
     await loadKeys()
+  }
+
+  async function createWebhook(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedProjectId) return
+    setErr(null)
+    setRevealedWebhookSecret(null)
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: whUrl.trim(),
+          label: whLabel.trim() || undefined,
+        }),
+      },
+    )
+    const b = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setErr(b.error ?? "Could not create webhook")
+      return
+    }
+    if (typeof b.signing_secret === "string") setRevealedWebhookSecret(b.signing_secret)
+    setWhUrl("")
+    setWhLabel("")
+    await loadWebhooks()
+  }
+
+  async function toggleWebhook(w: WebhookRow, next: boolean) {
+    if (!selectedProjectId) return
+    setErr(null)
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks/${w.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: next }),
+      },
+    )
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}))
+      setErr(b.error ?? "Update failed")
+      return
+    }
+    await loadWebhooks()
+  }
+
+  async function rotateWebhookSecret(id: string) {
+    if (!selectedProjectId) return
+    if (!window.confirm("Rotate signing secret? The old secret stops working immediately.")) return
+    setErr(null)
+    setRevealedWebhookSecret(null)
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks/${id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rotate_secret: true }),
+      },
+    )
+    const b = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setErr(b.error ?? "Rotate failed")
+      return
+    }
+    if (typeof b.signing_secret === "string") setRevealedWebhookSecret(b.signing_secret)
+  }
+
+  async function testWebhook(id: string) {
+    if (!selectedProjectId) return
+    setErr(null)
+    setMsg(null)
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks/${id}/test`,
+      { method: "POST" },
+    )
+    const b = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setErr(b.error ?? "Test failed")
+      return
+    }
+    setMsg(
+      b.ok
+        ? `Ping delivered (${b.http_status}).`
+        : `Endpoint returned HTTP ${b.http_status}.`,
+    )
+  }
+
+  async function deleteWebhook(id: string) {
+    if (!selectedProjectId) return
+    if (!window.confirm("Delete this webhook?")) return
+    setErr(null)
+    const res = await fetch(
+      `/api/admin/organisations/${orgId}/projects/${selectedProjectId}/webhooks/${id}`,
+      { method: "DELETE" },
+    )
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}))
+      setErr(b.error ?? "Delete failed")
+      return
+    }
+    await loadWebhooks()
   }
 
   async function revokeKey(id: string) {
@@ -806,6 +934,125 @@ export default function OrganisationDetailPage() {
                   <button type="button" style={btn(false)} onClick={() => void revokeKey(k.id)}>
                     revoke
                   </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {selected && (
+        <section style={{ marginBottom: "2.5rem" }}>
+          <h2 style={{ ...label, marginBottom: "0.75rem" }}>
+            WEBHOOKS — {selected.name}
+          </h2>
+          <p style={{ opacity: 0.35, fontSize: "0.75rem", marginBottom: "1rem" }}>
+            HTTPS endpoints that receive signed JSON when a session completes (event{" "}
+            <span style={{ fontFamily: "monospace" }}>session.completed</span>). Configure{" "}
+            <span style={{ fontFamily: "monospace" }}>CRON_SECRET</span> and call{" "}
+            <span style={{ fontFamily: "monospace" }}>GET /api/cron/webhook-deliveries</span>{" "}
+            on a schedule for retries.
+          </p>
+          {canOrgAdmin && (
+            <form onSubmit={createWebhook} style={{ marginBottom: "1.25rem" }}>
+              <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: "1 1 12rem" }}>
+                  <label style={label}>HTTPS URL</label>
+                  <input
+                    style={input}
+                    type="url"
+                    value={whUrl}
+                    onChange={(e) => setWhUrl(e.target.value)}
+                    placeholder="https://example.com/groucho-hook"
+                    required
+                  />
+                </div>
+                <div style={{ flex: "1 1 8rem" }}>
+                  <label style={label}>LABEL (OPTIONAL)</label>
+                  <input
+                    style={input}
+                    value={whLabel}
+                    onChange={(e) => setWhLabel(e.target.value)}
+                    placeholder="Production"
+                  />
+                </div>
+                <button type="submit" style={btn(true)}>
+                  Add webhook
+                </button>
+              </div>
+            </form>
+          )}
+          {revealedWebhookSecret && (
+            <div
+              style={{
+                padding: "1rem",
+                marginBottom: "1rem",
+                background: "rgba(255,255,255,0.04)",
+                fontFamily: "monospace",
+                fontSize: "0.75rem",
+                wordBreak: "break-all",
+              }}
+            >
+              <div style={{ opacity: 0.45, marginBottom: "0.5rem" }}>
+                Signing secret — copy now (create or rotate)
+              </div>
+              {revealedWebhookSecret}
+              <button
+                type="button"
+                style={{ ...btn(false), marginTop: "0.75rem" }}
+                onClick={() => void navigator.clipboard.writeText(revealedWebhookSecret)}
+              >
+                Copy
+              </button>
+              <button
+                type="button"
+                style={{ ...btn(false), marginTop: "0.75rem", marginLeft: "0.5rem" }}
+                onClick={() => setRevealedWebhookSecret(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {webhooks.map((w) => (
+              <li
+                key={w.id}
+                style={{
+                  fontSize: "0.78rem",
+                  padding: "0.45rem 0",
+                  borderBottom: "1px solid rgba(255,255,255,0.06)",
+                  display: "flex",
+                  gap: "0.75rem",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ opacity: w.active ? 0.85 : 0.35 }}>{w.label ?? "—"}</span>
+                <span style={{ fontFamily: "monospace", opacity: 0.4, wordBreak: "break-all" }}>
+                  {w.url}
+                </span>
+                {canOrgAdmin && (
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", opacity: 0.5 }}>
+                    <input
+                      type="checkbox"
+                      checked={w.active}
+                      onChange={(e) => void toggleWebhook(w, e.target.checked)}
+                    />
+                    active
+                  </label>
+                )}
+                {canOrgAdmin && (
+                  <>
+                    <button type="button" style={{ ...btn(false), marginLeft: "auto" }} onClick={() => void testWebhook(w.id)}>
+                      test ping
+                    </button>
+                    <button type="button" style={btn(false)} onClick={() => void rotateWebhookSecret(w.id)}>
+                      rotate secret
+                    </button>
+                    <button type="button" style={btn(false)} onClick={() => void deleteWebhook(w.id)}>
+                      delete
+                    </button>
+                  </>
                 )}
               </li>
             ))}
