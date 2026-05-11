@@ -1,16 +1,21 @@
-import { NextResponse } from "next/server"
+import { NextRequest } from "next/server"
+import { log } from "@/lib/logger"
+import { getOrCreateRequestId } from "@/lib/request-trace"
 import { resolveProjectContext } from "@/lib/project-resolution"
 import { outcomeLabelFromDbStatus } from "@/lib/session-outcome"
 import { supabase } from "@/lib/supabase"
+import { tracedJson } from "@/lib/with-request-trace"
 
 export async function GET(
-  req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
   const authHeader = req.headers.get("authorization")
   const projectResolved = await resolveProjectContext(authHeader)
   if (!projectResolved.ok) {
-    return NextResponse.json(projectResolved.body, { status: projectResolved.status })
+    return tracedJson(req, projectResolved.body, {
+      status: projectResolved.status,
+    })
   }
   const { projectId } = projectResolved.context
 
@@ -25,11 +30,15 @@ export async function GET(
     .maybeSingle()
 
   if (error) {
-    console.error("v1 get session:", error)
-    return NextResponse.json({ error: "Database error" }, { status: 500 })
+    log.error("v1_get_session_failed", {
+      requestId: getOrCreateRequestId(req),
+      projectId,
+      detail: error.message,
+    })
+    return tracedJson(req, { error: "Database error" }, { status: 500 })
   }
   if (!row) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 })
+    return tracedJson(req, { error: "Not found" }, { status: 404 })
   }
 
   const { count: turnCount } = await supabase
@@ -41,7 +50,22 @@ export async function GET(
   const outcome = outcomeLabelFromDbStatus(row.status)
   const concluded = ["passed", "failed", "redirected", "rejected"].includes(row.status)
 
-  return NextResponse.json({
+  let profile: unknown = null
+  if (concluded) {
+    const { data: v } = await supabase
+      .from("verdicts")
+      .select("payload")
+      .eq("session_id", row.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const payload = (v?.payload as Record<string, unknown> | undefined) ?? null
+    if (payload && typeof payload === "object" && payload.profile) {
+      profile = payload.profile
+    }
+  }
+
+  return tracedJson(req, {
     id: row.id,
     clientSessionKey: row.session_id,
     status: row.status,
@@ -49,5 +73,6 @@ export async function GET(
     turnsUsed: turnCount ?? 0,
     startedAt: row.created_at,
     completedAt: concluded ? row.updated_at : null,
+    ...(profile ? { profile } : {}),
   })
 }

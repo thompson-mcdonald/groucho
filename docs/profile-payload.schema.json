@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groucho.dev/schemas/profile.v1.json",
+  "title": "Profile v1",
+  "description": "Structured profile extracted on terminal session outcomes. The `core` object is platform-versioned. The `custom` object is brand-defined via personas.profile_schema (JSON Schema, properties only). Fields under `custom` may declare \"x-pii\": true to opt-in to platform PII masking in admin UIs and log redaction.",
+  "type": "object",
+  "required": ["schema_version", "extraction"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "core": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": [
+            "summary",
+            "sentiment",
+            "engagement",
+            "language",
+            "intent_tags",
+            "interests",
+            "risk_flags",
+            "qa",
+            "confidence"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "maxLength": 280,
+              "description": "1-2 sentence human-readable summary. Emails and phone numbers are auto-redacted."
+            },
+            "sentiment": {
+              "type": "string",
+              "enum": ["positive", "neutral", "negative"]
+            },
+            "engagement": {
+              "type": "string",
+              "enum": ["high", "medium", "low"]
+            },
+            "language": {
+              "type": "string",
+              "description": "BCP-47 language code (e.g. \"en\", \"fr\")."
+            },
+            "intent_tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "maxItems": 5
+            },
+            "interests": {
+              "type": "array",
+              "items": { "type": "string" },
+              "maxItems": 10
+            },
+            "risk_flags": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "qa": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["question", "answer"],
+                "properties": {
+                  "question": { "type": "string" },
+                  "answer": { "type": "string", "description": "Emails and phone numbers are auto-redacted." }
+                }
+              }
+            },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "custom": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "description": "Brand-defined fields whose shape is declared by personas.profile_schema. Only keys present in the persona's schema.properties survive; unknown keys are dropped."
+        }
+      ]
+    },
+    "extraction": {
+      "type": "object",
+      "required": ["model", "status"],
+      "properties": {
+        "model": { "type": "string" },
+        "status": { "type": "string", "enum": ["ok", "failed"] },
+        "reason": { "type": "string", "description": "Present when status = failed." }
+      }
+    }
+  }
+}

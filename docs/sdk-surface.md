@@ -91,7 +91,15 @@ type GatekeeperProps = {
   onSessionId?: (id: string) => void
   /** Optional persona picker when project exposes multiple active personas */
   personaId?: string | null
-  onOutcome?: (outcome: SessionOutcome, meta: { scores: ScoreBreakdown; secret?: string }) => void
+  onOutcome?: (
+    outcome: SessionOutcome,
+    meta: { scores: ScoreBreakdown; secret?: string; profile?: Profile }
+  ) => void
+  /**
+   * `profile` is included on terminal turns when the project has profile extraction
+   * enabled (default) and the persona declares a `profile_schema`. The shape follows
+   * `docs/profile-payload.schema.json`; see also `docs/profile-schema-guide.md`.
+   */
   /** Slots for host branding */
   renderHeader?: () => React.ReactNode
   renderFooter?: () => React.ReactNode

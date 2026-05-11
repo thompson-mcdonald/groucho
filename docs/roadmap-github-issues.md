@@ -48,21 +48,21 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 3 — Public project API — **in progress**
+## Phase 3 — Public project API — **feature complete**
 
 | Title | Type | Status | Description |
 |-------|------|--------|-------------|
 | Mount OpenAPI contract under `/v1` | feature | done | **`POST /v1/sessions/{sessionId}/messages`**, **`GET /v1/sessions/{sessionId}`**, **`POST /v1/sessions/{sessionId}/access`** ([docs/api/openapi.yaml](./api/openapi.yaml)). Shared handler [`lib/post-session-message.ts`](../lib/post-session-message.ts); `POST /api/chat` unchanged. Middleware allows `/v1/`. |
 | Contract tests: PostMessage 200/409/503 | test | done | `vitest` module-mocked contract tests: `lib/__tests__/contract-post-message.test.ts` (200/409/503 + 429). |
 | Rate limit: per API key + per session | feature | done | Lightweight in-memory limiter in `lib/rate-limit.ts` enforced by `lib/post-session-message.ts` (per api key + per project/session) and `/v1/.../access` (429 + `Retry-After`). Env: `GROUCHO_RL_API_KEY_PER_MINUTE`, `GROUCHO_RL_SESSION_PER_MINUTE`. |
-| Normalise outcome enum PASS/REDIRECT/REJECT | chore | Single mapper from model strings + thresholds. |
+| Normalise outcome enum PASS/REDIRECT/REJECT | chore | done | [`lib/session-outcome.ts`](../lib/session-outcome.ts) + thresholds in chat path. |
 
 **Depends on:** Phase 1 key resolution.  
 **Blocks:** Phase 5 (SDK against stable API).
 
 ---
 
-## Phase 4 — Webhooks + verdicts — **in progress**
+## Phase 4 — Webhooks + verdicts — **feature complete**
 
 | Title | Type | Status | Description |
 |-------|------|--------|-------------|
@@ -76,7 +76,7 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 5 — `@groucho/sdk` v1 — **in progress**
+## Phase 5 — `@groucho/sdk` v1 — **feature complete** (publish pipeline optional)
 
 | Title | Type | Status | Description |
 |-------|------|--------|-------------|
@@ -91,16 +91,33 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 6 — Hardening
+## Phase 6 — Hardening — **feature complete**
 
-| Title | Type | Description |
-|-------|------|---------------|
-| Observability: structured logs + trace ids | feature | Correlate session, project, request id. |
-| Load test: chat path k6 | test | SLO draft from PRD NFR. |
-| Backup + retention policy doc | docs | GDPR / delete org cascade. |
-| Security review checklist | docs | RLS, keys, webhooks, rate limits. |
+| Title | Type | Status | Description |
+|-------|------|--------|-------------|
+| Observability: structured logs + trace ids | feature | done | `lib/logger.ts` JSON lines; `x-request-id` / `x-correlation-id` via `lib/with-request-trace.ts` + middleware for `/v1/*`, `/api/chat`, `/api/access`; echoed on responses; chat path logs include `requestId`, `projectId`, `sessionId` where applicable. |
+| Load test: chat path k6 | test | done | [`loadtests/k6/chat-messages.js`](../loadtests/k6/chat-messages.js) — p95 &lt; 5s threshold (PRD NFR-PERF-1 draft). |
+| Backup + retention policy doc | docs | done | [backup-retention.md](./backup-retention.md). |
+| Security review checklist | docs | done | [security-review-checklist.md](./security-review-checklist.md). |
 
 **Depends on:** Phases 1–4 in place.
+
+---
+
+## Phase 6.5 — Profile v1 (persona-scoped) — **feature complete**
+
+| Title | Type | Status | Description |
+|-------|------|--------|-------------|
+| FR-PROFILE-1 — Persona-level `profile_schema` (JSON Schema) | feature | done | Migration `20260511220000_personas_profile_schema.sql` adds `personas.profile_schema jsonb` + `personas.profile_extractor_hint text`. Admin persona form accepts paste-JSON (parse-on-blur) + short hint; PUT/POST validate `{ type:"object", properties:{...} }`. |
+| FR-PROFILE-2 — Extraction module | feature | done | [`lib/profile-extraction.ts`](../lib/profile-extraction.ts) — single Anthropic call, fixed `core` + per-persona `custom`; clamp / drop-unknown-keys; PII redaction (email + E.164) in `core.summary` and `core.qa[*].answer`. Unit tests in `lib/__tests__/profile-extraction.test.ts`. |
+| FR-PROFILE-3 — Versioned payload + event schema | feature | done | `Profile` carries `schema_version: 1` + `core` + `custom` + `extraction`; [`profile-payload.schema.json`](./profile-payload.schema.json); extended [`event-payload-session-completed.schema.json`](./event-payload-session-completed.schema.json) with optional `profile`. |
+| FR-PROFILE-4 — Wired into verdict + webhook + post-session-message | feature | done | `recordVerdictAndEnqueueWebhooks` extracts profile based on `projects.settings.profile_extract_on` (defaults to all three terminal statuses); persona + transcript plumbed from `post-session-message.ts`. |
+| FR-PROFILE-5 — `GET /v1/sessions/{id}` exposes `profile` | feature | done | Reads latest `verdicts.payload.profile`. OpenAPI updated; SDK types regenerated. |
+| FR-PROFILE-6 — SDK `onOutcome` carries `profile` | feature | done | `packages/sdk/src/react/Gatekeeper.tsx` forwards `profile` when `sendMessage` response includes it; `Profile` / `ProfileCore` / `ProfileExtraction` re-exported. |
+| FR-PROFILE-7 — Admin Profile panel + PII masking | feature | done | Session detail under org page shows `core` chips + Q/A + custom fields. Fields whose schema entry has `"x-pii": true` are masked; **Reveal** button shown to org admins only. |
+| FR-PROFILE-8 — Author guide | docs | done | [profile-schema-guide.md](./profile-schema-guide.md). |
+
+**Depends on:** Phase 4 verdict pipeline.
 
 ---
 
@@ -112,6 +129,7 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 | Billing: Stripe customer + metered usage | feature | Stub hooks from PRD. |
 | Admin: stats header + CSV export | feature | [03-admin-dashboard.md](../prompts/03-admin-dashboard.md) bonus. |
 | Streaming responses (optional) | spike | AI SDK vs DB consistency ADR. |
+| Profile v2 — deterministic step engine for structured onboarding | spike | PRD §6.7. |
 
 ---
 

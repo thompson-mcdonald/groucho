@@ -213,6 +213,10 @@ components:
           type: string
           format: uuid
           description: Present only when `status` is `passed` and access gating requires a secret
+        profile:
+          allOf:
+            - $ref: "#/components/schemas/Profile"
+          description: Structured profile extracted on terminal turns; absent on non-terminal turns and when extraction is disabled.
 
     Session:
       type: object
@@ -239,6 +243,95 @@ components:
           type: string
           format: date-time
           nullable: true
+        profile:
+          allOf:
+            - $ref: "#/components/schemas/Profile"
+          description: Structured profile from the latest verdict; present once the session has concluded.
+
+    ProfileCore:
+      type: object
+      required:
+        - summary
+        - sentiment
+        - engagement
+        - language
+        - intent_tags
+        - interests
+        - risk_flags
+        - qa
+        - confidence
+      properties:
+        summary:
+          type: string
+          maxLength: 280
+          description: Short summary. Emails and phone numbers are auto-redacted.
+        sentiment:
+          type: string
+          enum: [positive, neutral, negative]
+        engagement:
+          type: string
+          enum: [high, medium, low]
+        language:
+          type: string
+          description: BCP-47 code (e.g. `en`, `fr`)
+        intent_tags:
+          type: array
+          items: { type: string }
+          maxItems: 5
+        interests:
+          type: array
+          items: { type: string }
+          maxItems: 10
+        risk_flags:
+          type: array
+          items: { type: string }
+        qa:
+          type: array
+          items:
+            type: object
+            required: [question, answer]
+            properties:
+              question: { type: string }
+              answer: { type: string }
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    ProfileExtraction:
+      type: object
+      required: [model, status]
+      properties:
+        model: { type: string }
+        status:
+          type: string
+          enum: [ok, failed]
+        reason:
+          type: string
+          description: Present when `status` is `failed`.
+
+    Profile:
+      type: object
+      required: [schema_version, extraction]
+      description: |
+        Structured profile extracted on terminal session outcomes. `core` follows the
+        platform-versioned shape; `custom` is brand-defined via the persona's
+        `profile_schema` (only declared keys are kept). See
+        [profile-payload.schema.json](../profile-payload.schema.json).
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        core:
+          allOf:
+            - $ref: "#/components/schemas/ProfileCore"
+          nullable: true
+        custom:
+          type: object
+          nullable: true
+          additionalProperties: true
+        extraction:
+          $ref: "#/components/schemas/ProfileExtraction"
 
     Error:
       type: object

@@ -19,7 +19,7 @@ export async function GET(
 
   const { data: session, error: sErr } = await supabase
     .from("sessions")
-    .select("id, project_id, organisation_id")
+    .select("id, project_id, organisation_id, persona_id, status")
     .eq("id", sessionId)
     .eq("project_id", projectId)
     .eq("organisation_id", orgId)
@@ -40,5 +40,36 @@ export async function GET(
     return NextResponse.json({ error: "Database error" }, { status: 500 })
   }
 
-  return NextResponse.json({ messages: data ?? [] })
+  let profile: unknown = null
+  const concluded = ["passed", "failed", "redirected", "rejected"].includes(
+    (session as { status?: string }).status ?? "",
+  )
+  if (concluded) {
+    const { data: v } = await supabase
+      .from("verdicts")
+      .select("payload")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const payload = (v?.payload as Record<string, unknown> | undefined) ?? null
+    if (payload && payload.profile) profile = payload.profile
+  }
+
+  let personaSchema: unknown = null
+  const personaId = (session as { persona_id?: string | null }).persona_id
+  if (personaId) {
+    const { data: persona } = await supabase
+      .from("personas")
+      .select("profile_schema")
+      .eq("id", personaId)
+      .maybeSingle()
+    personaSchema = persona?.profile_schema ?? null
+  }
+
+  return NextResponse.json({
+    messages: data ?? [],
+    profile,
+    personaSchema,
+  })
 }

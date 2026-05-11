@@ -50,6 +50,10 @@
         "cultural_depth": { "type": "number" },
         "overall": { "type": "number" }
       }
+    },
+    "profile": {
+      "description": "Structured profile extracted from the conversation. See profile-payload.schema.json. Omitted when extraction is disabled for the project, or when no persona profile data is available.",
+      "$ref": "profile-payload.schema.json"
     }
   }
 }

@@ -14,7 +14,11 @@
     "test": "vitest run",
     "sdk:codegen": "npm run codegen -w @groucho/sdk",
     "sdk:build": "npm run build -w @groucho/sdk",
-    "example:groucho": "npm run dev -w next-groucho-example"
+    "sdk:test": "npm run test -w @groucho/sdk",
+    "example:groucho": "npm run dev -w next-groucho-example",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "release": "npm run sdk:build && changeset publish"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.77.0",
@@ -26,6 +30,7 @@
     "react-dom": "19.2.3"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^25.6.0",
     "@types/react": "^19",

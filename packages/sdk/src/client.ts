@@ -5,6 +5,9 @@ export type PostMessageResponse = components["schemas"]["PostMessageResponse"]
 export type Session = components["schemas"]["Session"]
 export type ScoreBreakdown = components["schemas"]["ScoreBreakdown"]
 export type SessionOutcome = components["schemas"]["SessionOutcome"]
+export type Profile = components["schemas"]["Profile"]
+export type ProfileCore = components["schemas"]["ProfileCore"]
+export type ProfileExtraction = components["schemas"]["ProfileExtraction"]
 
 export type GrouchoClientOptions = {
   /** API origin + optional path prefix, e.g. `https://api.example.com` or `https://app.example.com/api/groucho` */

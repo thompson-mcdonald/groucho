@@ -100,6 +100,8 @@ export interface components {
              * @description Present only when `status` is `passed` and access gating requires a secret
              */
             secret?: string;
+            /** @description Structured profile extracted on terminal turns; absent on non-terminal turns and when extraction is disabled. */
+            profile?: components["schemas"]["Profile"];
         };
         Session: {
             /** Format: uuid */
@@ -117,6 +119,48 @@ export interface components {
             startedAt?: string;
             /** Format: date-time */
             completedAt?: string | null;
+            /** @description Structured profile from the latest verdict; present once the session has concluded. */
+            profile?: components["schemas"]["Profile"];
+        };
+        ProfileCore: {
+            /** @description Short summary. Emails and phone numbers are auto-redacted. */
+            summary: string;
+            /** @enum {string} */
+            sentiment: "positive" | "neutral" | "negative";
+            /** @enum {string} */
+            engagement: "high" | "medium" | "low";
+            /** @description BCP-47 code (e.g. `en`, `fr`) */
+            language: string;
+            intent_tags: string[];
+            interests: string[];
+            risk_flags: string[];
+            qa: {
+                question: string;
+                answer: string;
+            }[];
+            confidence: number;
+        };
+        ProfileExtraction: {
+            model: string;
+            /** @enum {string} */
+            status: "ok" | "failed";
+            /** @description Present when `status` is `failed`. */
+            reason?: string;
+        };
+        /**
+         * @description Structured profile extracted on terminal session outcomes. `core` follows the
+         *     platform-versioned shape; `custom` is brand-defined via the persona's
+         *     `profile_schema` (only declared keys are kept). See
+         *     [profile-payload.schema.json](../profile-payload.schema.json).
+         */
+        Profile: {
+            /** @enum {integer} */
+            schema_version: 1;
+            core?: components["schemas"]["ProfileCore"] | null;
+            custom?: {
+                [key: string]: unknown;
+            } | null;
+            extraction: components["schemas"]["ProfileExtraction"];
         };
         Error: {
             error?: string;

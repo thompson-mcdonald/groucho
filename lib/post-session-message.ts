@@ -7,8 +7,21 @@ import {
   touchApiKeyLastUsed,
 } from "@/lib/project-resolution"
 import { checkRateLimit, readRateLimitConfig } from "@/lib/rate-limit"
+import { log } from "@/lib/logger"
+import { REQUEST_ID_HEADER } from "@/lib/request-trace"
 import { supabase } from "@/lib/supabase"
+import { botSignalFromHeaders } from "@/lib/bot-signals"
 import { recordVerdictAndEnqueueWebhooks } from "@/lib/verdict-webhook"
+
+function traceJson(
+  input: PostSessionMessageInput,
+  body: unknown,
+  init?: ResponseInit,
+): NextResponse {
+  const headers = new Headers(init?.headers)
+  if (input.requestId) headers.set(REQUEST_ID_HEADER, input.requestId)
+  return NextResponse.json(body, { ...init, headers })
+}
 
 const client = new Anthropic()
 
@@ -112,6 +125,10 @@ export type PostSessionMessageInput = {
   sessionId: string
   message: string
   personaId?: string | null
+  /** From `x-request-id` middleware; echoed on responses and included in structured logs. */
+  requestId?: string
+  /** When set, used for optional bot UA heuristics (`GROUPCHO_*` env). */
+  incomingHeaders?: Headers
 }
 
 /**
@@ -122,7 +139,8 @@ export async function postSessionMessage(
 ): Promise<NextResponse> {
   const { message, sessionId, personaId } = input
   if (!message?.trim() || !sessionId?.trim()) {
-    return NextResponse.json(
+    return traceJson(
+      input,
       { error: "Missing required fields" },
       { status: 400 },
     )
@@ -130,11 +148,37 @@ export async function postSessionMessage(
 
   const projectResolved = await resolveProjectContext(input.authorization)
   if (!projectResolved.ok) {
-    return NextResponse.json(projectResolved.body, {
+    return traceJson(input, projectResolved.body, {
       status: projectResolved.status,
     })
   }
   const { organisationId, projectId, apiKeyId } = projectResolved.context
+
+  const botSignal = input.incomingHeaders
+    ? botSignalFromHeaders(input.incomingHeaders)
+    : { likelyBot: false as const }
+
+  if (botSignal.likelyBot && process.env.GROUPCHO_REJECT_AUTOMATED_UA === "1") {
+    log.warn("request_blocked_likely_bot", {
+      requestId: input.requestId,
+      projectId,
+      sessionId,
+      reason: botSignal.reason,
+    })
+    return traceJson(input, { error: "Forbidden" }, { status: 403 })
+  }
+
+  if (
+    botSignal.likelyBot &&
+    process.env.GROUPCHO_LOG_LIKELY_BOT_UA === "1"
+  ) {
+    log.info("likely_bot_client", {
+      requestId: input.requestId,
+      projectId,
+      sessionId,
+      reason: botSignal.reason,
+    })
+  }
 
   const rl = readRateLimitConfig()
   const apiKeyBucket = checkRateLimit({
@@ -144,7 +188,8 @@ export async function postSessionMessage(
     windowMs: 60_000,
   })
   if (!apiKeyBucket.ok) {
-    return NextResponse.json(
+    return traceJson(
+      input,
       { error: "Rate limited" },
       {
         status: 429,
@@ -162,7 +207,8 @@ export async function postSessionMessage(
     windowMs: 60_000,
   })
   if (!sessionBucket.ok) {
-    return NextResponse.json(
+    return traceJson(
+      input,
       { error: "Rate limited" },
       {
         status: 429,
@@ -176,31 +222,37 @@ export async function postSessionMessage(
     touchApiKeyLastUsed(apiKeyId)
   }
 
-  let defaultPersona: {
+  type PersonaRow = {
     id: string
     prompt: string
     pass_threshold: number
     reject_threshold: number
-  } | null = null
+    profile_schema?: unknown
+    profile_extractor_hint?: string | null
+  }
+
+  let defaultPersona: PersonaRow | null = null
+  const personaCols =
+    "id, prompt, pass_threshold, reject_threshold, profile_schema, profile_extractor_hint"
 
   if (personaId) {
     const { data } = await supabase
       .from("personas")
-      .select("id, prompt, pass_threshold, reject_threshold")
+      .select(personaCols)
       .eq("id", personaId)
       .eq("is_active", true)
       .single()
-    defaultPersona = data
+    defaultPersona = data as PersonaRow | null
   }
 
   if (!defaultPersona) {
     const { data } = await supabase
       .from("personas")
-      .select("id, prompt, pass_threshold, reject_threshold")
+      .select(personaCols)
       .eq("is_active", true)
       .eq("is_default", true)
       .single()
-    defaultPersona = data
+    defaultPersona = data as PersonaRow | null
   }
 
   const systemPrompt = defaultPersona?.prompt ?? DOORMAN_SYSTEM_PROMPT
@@ -221,7 +273,8 @@ export async function postSessionMessage(
     if (
       ["passed", "failed", "redirected", "rejected"].includes(existing.status)
     ) {
-      return NextResponse.json(
+      return traceJson(
+        input,
         { error: "Session concluded" },
         { status: 409 },
       )
@@ -240,8 +293,13 @@ export async function postSessionMessage(
       .single()
 
     if (createError || !created) {
-      console.error("Failed to create session:", createError)
-      return NextResponse.json({ error: "Database error" }, { status: 500 })
+      log.error("session_create_failed", {
+        requestId: input.requestId,
+        projectId,
+        sessionId,
+        detail: createError?.message,
+      })
+      return traceJson(input, { error: "Database error" }, { status: 500 })
     }
     sessionRowId = created.id
   }
@@ -259,8 +317,13 @@ export async function postSessionMessage(
     .single()
 
   if (userMsgError || !userMsg) {
-    console.error("Failed to save user message:", userMsgError)
-    return NextResponse.json({ error: "Database error" }, { status: 500 })
+    log.error("user_message_insert_failed", {
+      requestId: input.requestId,
+      projectId,
+      sessionId,
+      detail: userMsgError?.message,
+    })
+    return traceJson(input, { error: "Database error" }, { status: 500 })
   }
 
   const { data: history } = await supabase
@@ -294,8 +357,14 @@ export async function postSessionMessage(
     const textBlock = response.content.find((b) => b.type === "text")
     assistantContent = textBlock?.type === "text" ? textBlock.text.trim() : ""
   } catch (err) {
-    console.error("Claude API error:", err)
-    return NextResponse.json(
+    log.error("llm_unavailable", {
+      requestId: input.requestId,
+      projectId,
+      sessionId,
+      detail: err instanceof Error ? err.message : String(err),
+    })
+    return traceJson(
+      input,
       { error: "AI service unavailable" },
       { status: 503 },
     )
@@ -316,7 +385,12 @@ export async function postSessionMessage(
   })
 
   if (asstError) {
-    console.error("Failed to save assistant message:", asstError)
+    log.error("assistant_message_insert_failed", {
+      requestId: input.requestId,
+      projectId,
+      sessionId,
+      detail: asstError.message,
+    })
   }
 
   let status: "passed" | "redirected" | "rejected" | null = null
@@ -339,23 +413,44 @@ export async function postSessionMessage(
     await supabase.from("sessions").update({ status }).eq("id", sessionRowId)
   }
 
+  let profile: Awaited<ReturnType<typeof recordVerdictAndEnqueueWebhooks>>["profile"] = null
   if (status !== null) {
-    void Promise.resolve(
-      recordVerdictAndEnqueueWebhooks({
+    const transcriptForExtraction: ConversationMessage[] = [
+      ...dbHistory,
+      { role: "assistant", content: assistantContent },
+    ]
+    try {
+      const result = await recordVerdictAndEnqueueWebhooks({
         organisationId,
         projectId,
         sessionInternalId: sessionRowId,
         clientSessionKey: sessionId,
         terminalStatus: status,
         scores,
-      }),
-    ).catch((err) => console.error("verdict/webhook:", err))
+        persona: defaultPersona
+          ? {
+              profile_schema: defaultPersona.profile_schema ?? null,
+              profile_extractor_hint: defaultPersona.profile_extractor_hint ?? null,
+            }
+          : null,
+        transcript: transcriptForExtraction,
+      })
+      profile = result?.profile ?? null
+    } catch (err) {
+      log.error("verdict_webhook_failed", {
+        requestId: input.requestId,
+        projectId,
+        sessionId,
+        detail: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
-  return NextResponse.json({
+  return traceJson(input, {
     message: assistantContent,
     status: status ?? "active",
     scores,
     ...(successSecret ? { secret: successSecret } : {}),
+    ...(profile ? { profile } : {}),
   })
 }

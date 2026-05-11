@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr"
 import { NextRequest, NextResponse } from "next/server"
 import { verifyPeAuthEmail, isAllowedPlatformEmail } from "@/lib/pe-auth"
+import { nextWithRequestId } from "@/lib/with-request-trace"
 
 const PUBLIC_PATHS = [
   "/login",
@@ -11,7 +12,6 @@ const PUBLIC_PATHS = [
   "/signup",
   "/api/organisations/signup",
   "/api/me/",
-  "/v1/",
 ]
 const STATIC_PREFIXES = ["/_next/", "/favicon.ico"]
 
@@ -27,6 +27,16 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   if (STATIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next()
+
+  /** Public API + legacy chat/access: trace id + auth only via route (API key), not session cookie. */
+  if (
+    pathname.startsWith("/v1/") ||
+    pathname === "/api/chat" ||
+    pathname === "/api/access"
+  ) {
+    return nextWithRequestId(req)
+  }
+
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return NextResponse.next()
 
   const secret = process.env.AUTH_SECRET

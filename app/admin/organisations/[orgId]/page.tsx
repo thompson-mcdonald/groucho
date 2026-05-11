@@ -72,6 +72,25 @@ type TranscriptMessage = {
   metadata: unknown
 }
 
+type ProfilePayload = {
+  schema_version: number
+  core: {
+    summary: string
+    sentiment: string
+    engagement: string
+    language: string
+    intent_tags: string[]
+    interests: string[]
+    risk_flags: string[]
+    qa: { question: string; answer: string }[]
+    confidence: number
+  } | null
+  custom: Record<string, unknown> | null
+  extraction:
+    | { model: string; status: "ok" }
+    | { model: string; status: "failed"; reason?: string }
+}
+
 function slugify(str: string) {
   return str
     .toLowerCase()
@@ -117,6 +136,207 @@ function btn(p: boolean): React.CSSProperties {
   }
 }
 
+function isPii(personaSchema: unknown, key: string): boolean {
+  if (!personaSchema || typeof personaSchema !== "object") return false
+  const props = (personaSchema as { properties?: unknown }).properties
+  if (!props || typeof props !== "object") return false
+  const def = (props as Record<string, unknown>)[key]
+  if (!def || typeof def !== "object") return false
+  return (def as Record<string, unknown>)["x-pii"] === true
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "0.15rem 0.5rem",
+        background: "rgba(255,255,255,0.08)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: "999px",
+        fontSize: "0.68rem",
+        marginRight: "0.35rem",
+        marginBottom: "0.25rem",
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+function ProfilePanel({
+  profile,
+  personaSchema,
+  canReveal,
+  revealedKeys,
+  onToggleReveal,
+}: {
+  profile: ProfilePayload
+  personaSchema: unknown
+  canReveal: boolean
+  revealedKeys: Set<string>
+  onToggleReveal: (key: string) => void
+}) {
+  const core = profile.core
+  const custom = profile.custom ?? {}
+  return (
+    <div
+      style={{
+        marginTop: "1.5rem",
+        padding: "1rem",
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.08)",
+      }}
+    >
+      <div style={{ ...label, marginBottom: "0.75rem" }}>
+        PROFILE (v{profile.schema_version}){" "}
+        <span
+          style={{
+            marginLeft: "0.5rem",
+            opacity: 0.5,
+            fontFamily: "monospace",
+            textTransform: "none",
+            letterSpacing: 0,
+          }}
+        >
+          {profile.extraction.status}
+          {profile.extraction.status === "failed" && profile.extraction.reason
+            ? ` · ${profile.extraction.reason}`
+            : ""}
+        </span>
+      </div>
+
+      {core ? (
+        <>
+          <p style={{ fontSize: "0.85rem", margin: 0, marginBottom: "0.75rem" }}>
+            {core.summary || <span style={{ opacity: 0.35 }}>No summary.</span>}
+          </p>
+          <div style={{ marginBottom: "0.5rem" }}>
+            <Chip>sentiment: {core.sentiment}</Chip>
+            <Chip>engagement: {core.engagement}</Chip>
+            <Chip>language: {core.language}</Chip>
+            <Chip>confidence: {core.confidence.toFixed(2)}</Chip>
+          </div>
+          {core.intent_tags.length > 0 && (
+            <div style={{ marginTop: "0.5rem" }}>
+              <span style={{ opacity: 0.4, fontSize: "0.7rem", marginRight: "0.5rem" }}>
+                intent
+              </span>
+              {core.intent_tags.map((t) => (
+                <Chip key={t}>{t}</Chip>
+              ))}
+            </div>
+          )}
+          {core.interests.length > 0 && (
+            <div style={{ marginTop: "0.35rem" }}>
+              <span style={{ opacity: 0.4, fontSize: "0.7rem", marginRight: "0.5rem" }}>
+                interests
+              </span>
+              {core.interests.map((t) => (
+                <Chip key={t}>{t}</Chip>
+              ))}
+            </div>
+          )}
+          {core.risk_flags.length > 0 && (
+            <div style={{ marginTop: "0.35rem" }}>
+              <span style={{ opacity: 0.4, fontSize: "0.7rem", marginRight: "0.5rem" }}>
+                risks
+              </span>
+              {core.risk_flags.map((t) => (
+                <Chip key={t}>{t}</Chip>
+              ))}
+            </div>
+          )}
+          {core.qa.length > 0 && (
+            <details style={{ marginTop: "0.75rem" }}>
+              <summary
+                style={{
+                  cursor: "pointer",
+                  fontSize: "0.7rem",
+                  opacity: 0.55,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                {core.qa.length} Q/A pair{core.qa.length === 1 ? "" : "s"}
+              </summary>
+              <ul style={{ listStyle: "none", padding: "0.5rem 0 0", margin: 0 }}>
+                {core.qa.map((qa, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      padding: "0.35rem 0",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    <div style={{ opacity: 0.5 }}>{qa.question}</div>
+                    <div style={{ opacity: 0.85, marginTop: "0.15rem" }}>{qa.answer}</div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      ) : (
+        <p style={{ opacity: 0.35, fontSize: "0.78rem", margin: 0 }}>No core profile.</p>
+      )}
+
+      {custom && Object.keys(custom).length > 0 && (
+        <div style={{ marginTop: "1rem" }}>
+          <div style={{ ...label, marginBottom: "0.5rem" }}>CUSTOM</div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {Object.entries(custom).map(([k, v]) => {
+              const pii = isPii(personaSchema, k)
+              const revealed = revealedKeys.has(k)
+              const display =
+                pii && !revealed ? "••••••" : typeof v === "string" ? v : JSON.stringify(v)
+              return (
+                <li
+                  key={k}
+                  style={{
+                    fontSize: "0.78rem",
+                    padding: "0.35rem 0",
+                    borderBottom: "1px solid rgba(255,255,255,0.05)",
+                    display: "flex",
+                    gap: "0.75rem",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: "monospace",
+                      opacity: 0.55,
+                      minWidth: "8rem",
+                    }}
+                  >
+                    {k}
+                    {pii ? (
+                      <span style={{ marginLeft: "0.3rem", color: "#f59e0b", fontSize: "0.62rem" }}>
+                        PII
+                      </span>
+                    ) : null}
+                  </span>
+                  <span style={{ opacity: 0.9, wordBreak: "break-word" }}>{display}</span>
+                  {pii && canReveal && (
+                    <button
+                      type="button"
+                      style={{ ...btn(false), marginLeft: "auto" }}
+                      onClick={() => onToggleReveal(k)}
+                    >
+                      {revealed ? "hide" : "reveal"}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function OrganisationDetailPage() {
   const params = useParams()
   const orgId = params.orgId as string
@@ -147,6 +367,9 @@ export default function OrganisationDetailPage() {
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([])
+  const [profile, setProfile] = useState<ProfilePayload | null>(null)
+  const [personaSchema, setPersonaSchema] = useState<unknown>(null)
+  const [revealedCustomKeys, setRevealedCustomKeys] = useState<Set<string>>(new Set())
   /** `platform` = allowlisted operator; otherwise org membership role. */
   const [accessRole, setAccessRole] = useState<"platform" | "owner" | "admin" | "member" | null>(
     null,
@@ -204,6 +427,9 @@ export default function OrganisationDetailPage() {
   const loadTranscript = useCallback(async () => {
     if (!selectedProjectId || !selectedSessionId) {
       setTranscript([])
+      setProfile(null)
+      setPersonaSchema(null)
+      setRevealedCustomKeys(new Set())
       return
     }
     const res = await fetch(
@@ -212,8 +438,14 @@ export default function OrganisationDetailPage() {
     if (res.ok) {
       const j = await res.json()
       setTranscript(j.messages ?? [])
+      setProfile((j.profile as ProfilePayload | null) ?? null)
+      setPersonaSchema(j.personaSchema ?? null)
+      setRevealedCustomKeys(new Set())
     } else {
       setTranscript([])
+      setProfile(null)
+      setPersonaSchema(null)
+      setRevealedCustomKeys(new Set())
     }
   }, [orgId, selectedProjectId, selectedSessionId])
 
@@ -1149,6 +1381,22 @@ export default function OrganisationDetailPage() {
                     )
                   })}
                 </ul>
+              )}
+              {profile && (
+                <ProfilePanel
+                  profile={profile}
+                  personaSchema={personaSchema}
+                  canReveal={canOrgAdmin}
+                  revealedKeys={revealedCustomKeys}
+                  onToggleReveal={(k) =>
+                    setRevealedCustomKeys((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(k)) next.delete(k)
+                      else next.add(k)
+                      return next
+                    })
+                  }
+                />
               )}
             </div>
           )}

@@ -24,8 +24,10 @@ vi.mock("@/lib/scoring", () => ({
   })),
 }))
 
+const recordVerdictMock = vi.fn().mockResolvedValue({ profile: null })
+
 vi.mock("@/lib/verdict-webhook", () => ({
-  recordVerdictAndEnqueueWebhooks: vi.fn().mockResolvedValue(undefined),
+  recordVerdictAndEnqueueWebhooks: (...args: unknown[]) => recordVerdictMock(...args),
 }))
 
 // Anthropic is used in two places; we mock the constructor + messages.create
@@ -141,6 +143,8 @@ vi.mock("@/lib/supabase", () => {
         prompt: "x",
         pass_threshold: 0.65,
         reject_threshold: 0.25,
+        profile_schema: null,
+        profile_extractor_hint: null,
         is_active: true,
         is_default: true,
       },
@@ -159,6 +163,32 @@ describe("contract: postSessionMessage", () => {
     anthropicCreateImpl = async () => ({
       content: [{ type: "text", text: "REDIRECT" }],
     })
+    recordVerdictMock.mockReset().mockResolvedValue({ profile: null })
+  })
+
+  it("forwards persona + transcript to verdict and surfaces profile in response", async () => {
+    recordVerdictMock.mockResolvedValueOnce({
+      profile: {
+        schema_version: 1,
+        core: null,
+        custom: null,
+        extraction: { model: "m", status: "ok" },
+      },
+    })
+
+    const { postSessionMessage } = await import("@/lib/post-session-message")
+    const res = await postSessionMessage({
+      authorization: "Bearer gk_test_x",
+      sessionId: "sess_profile_path_1",
+      message: "hello",
+    })
+    expect(res.status).toBe(200)
+    const body = await jsonFromResponse(res as any)
+    expect(body.profile).toBeTruthy()
+    expect(recordVerdictMock).toHaveBeenCalled()
+    const [opts] = recordVerdictMock.mock.calls[0] as [Record<string, unknown>]
+    expect(opts.persona).toBeTruthy()
+    expect(Array.isArray(opts.transcript)).toBe(true)
   })
 
   it("200: returns message/status/scores", async () => {

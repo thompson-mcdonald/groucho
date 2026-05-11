@@ -1,6 +1,13 @@
 import { createHmac, randomBytes, randomUUID } from "crypto"
-import type { Score } from "@/lib/scoring"
+import type { ConversationMessage, Score } from "@/lib/scoring"
 import { supabase } from "@/lib/supabase"
+import {
+  extractProfile,
+  summariseProfileForLog,
+  type PersonaForExtraction,
+  type Profile,
+} from "@/lib/profile-extraction"
+import { log } from "@/lib/logger"
 
 export type TerminalSessionStatus = "passed" | "redirected" | "rejected"
 
@@ -30,6 +37,30 @@ export type VerdictPayload = {
   }
   outcome: "PASS" | "REDIRECT" | "REJECT"
   scores?: Score
+  profile?: Profile
+}
+
+const DEFAULT_PROFILE_EXTRACT_STATUSES: TerminalSessionStatus[] = [
+  "passed",
+  "redirected",
+  "rejected",
+]
+
+function resolveExtractStatuses(settings: unknown): TerminalSessionStatus[] | null {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return DEFAULT_PROFILE_EXTRACT_STATUSES
+  }
+  const raw = (settings as Record<string, unknown>).profile_extract_on
+  if (raw === undefined) return DEFAULT_PROFILE_EXTRACT_STATUSES
+  if (raw === false || raw === null) return null
+  if (Array.isArray(raw)) {
+    const filtered = raw.filter(
+      (v): v is TerminalSessionStatus =>
+        v === "passed" || v === "redirected" || v === "rejected",
+    )
+    return filtered.length ? filtered : null
+  }
+  return DEFAULT_PROFILE_EXTRACT_STATUSES
 }
 
 export async function recordVerdictAndEnqueueWebhooks(opts: {
@@ -39,7 +70,11 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
   clientSessionKey: string
   terminalStatus: TerminalSessionStatus
   scores: Score
-}): Promise<void> {
+  /** Persona row used to decide custom profile extraction. */
+  persona?: PersonaForExtraction | null
+  /** Full conversation transcript to feed the extractor. */
+  transcript?: ConversationMessage[]
+}): Promise<{ profile: Profile | null }> {
   const { data: project } = await supabase
     .from("projects")
     .select("settings")
@@ -47,12 +82,41 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
     .maybeSingle()
 
   if (isDryRun(project?.settings)) {
-    return
+    return { profile: null }
   }
 
   const outcome = sessionStatusToOutcome(opts.terminalStatus)
   const occurredAt = new Date().toISOString()
   const verdictId = randomUUID()
+
+  let profile: Profile | null = null
+  const extractStatuses = resolveExtractStatuses(project?.settings)
+  const shouldExtract =
+    extractStatuses !== null &&
+    extractStatuses.includes(opts.terminalStatus) &&
+    Array.isArray(opts.transcript) &&
+    opts.transcript.length > 0
+
+  if (shouldExtract) {
+    try {
+      profile = await extractProfile({
+        transcript: opts.transcript!,
+        persona: opts.persona ?? null,
+      })
+      log.info("profile_extracted", {
+        projectId: opts.projectId,
+        sessionId: opts.sessionInternalId,
+        ...summariseProfileForLog(profile),
+      })
+    } catch (err) {
+      log.error("profile_extract_unexpected", {
+        projectId: opts.projectId,
+        sessionId: opts.sessionInternalId,
+        detail: err instanceof Error ? err.message : String(err),
+      })
+      profile = null
+    }
+  }
 
   const payload: VerdictPayload = {
     event: "session.completed",
@@ -66,6 +130,7 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
     },
     outcome,
     scores: opts.scores,
+    ...(profile ? { profile } : {}),
   }
 
   const { data: verdict, error: vErr } = await supabase
@@ -84,13 +149,17 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
 
   if (vErr) {
     if (vErr.code === "23505") {
-      return
+      return { profile }
     }
-    console.error("verdicts insert:", vErr)
-    return
+    log.error("verdicts_insert_failed", {
+      projectId: opts.projectId,
+      sessionId: opts.sessionInternalId,
+      detail: vErr.message,
+    })
+    return { profile }
   }
 
-  if (!verdict) return
+  if (!verdict) return { profile }
 
   const { data: hooks } = await supabase
     .from("webhooks")
@@ -98,7 +167,7 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
     .eq("project_id", opts.projectId)
     .eq("active", true)
 
-  if (!hooks?.length) return
+  if (!hooks?.length) return { profile }
 
   const eventName = "session.completed"
   const deliveries: { id: string }[] = []
@@ -125,6 +194,8 @@ export async function recordVerdictAndEnqueueWebhooks(opts: {
   for (const d of deliveries) {
     void tryDeliverWebhook(d.id)
   }
+
+  return { profile }
 }
 
 function signBody(secret: string, rawBody: string): string {

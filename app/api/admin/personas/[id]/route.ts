@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { resolveAdminActor } from "@/lib/admin-actor"
 import { requirePlatform, unauthorized } from "@/lib/org-access"
+import {
+  normaliseExtractorHint,
+  parseProfileSchemaInput,
+} from "@/lib/persona-profile-schema"
 import { supabase } from "@/lib/supabase"
 
 export async function PUT(
@@ -22,6 +26,8 @@ export async function PUT(
     is_default: boolean
     pass_threshold: number
     reject_threshold: number
+    profile_schema?: unknown
+    profile_extractor_hint?: unknown
   }
   try {
     body = await req.json()
@@ -35,6 +41,11 @@ export async function PUT(
       { error: "Name, slug, and prompt are required." },
       { status: 400 }
     )
+  }
+
+  const parsedSchema = parseProfileSchemaInput(body.profile_schema)
+  if (!parsedSchema.ok) {
+    return NextResponse.json({ error: parsedSchema.error }, { status: 400 })
   }
 
   if (is_default) {
@@ -55,6 +66,8 @@ export async function PUT(
       is_default,
       pass_threshold: pass_threshold ?? 0.65,
       reject_threshold: reject_threshold ?? 0.25,
+      profile_schema: parsedSchema.value,
+      profile_extractor_hint: normaliseExtractorHint(body.profile_extractor_hint),
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)

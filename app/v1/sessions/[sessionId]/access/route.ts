@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
+import { log } from "@/lib/logger"
+import { getOrCreateRequestId } from "@/lib/request-trace"
 import { resolveProjectContext } from "@/lib/project-resolution"
 import { checkRateLimit, readRateLimitConfig } from "@/lib/rate-limit"
 import { supabase } from "@/lib/supabase"
+import { tracedJson } from "@/lib/with-request-trace"
 
 /**
  * POST /v1/sessions/{sessionId}/access — register email after a passed session.
@@ -12,9 +15,12 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
+  const requestId = getOrCreateRequestId(req)
   const projectResolved = await resolveProjectContext(req.headers.get("authorization"))
   if (!projectResolved.ok) {
-    return NextResponse.json(projectResolved.body, { status: projectResolved.status })
+    return tracedJson(req, projectResolved.body, {
+      status: projectResolved.status,
+    })
   }
   const { projectId, apiKeyId } = projectResolved.context
 
@@ -25,12 +31,12 @@ export async function POST(
   try {
     body = await req.json()
   } catch {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 })
+    return tracedJson(req, { error: "Invalid request" }, { status: 400 })
   }
 
   const email = body.email?.trim().toLowerCase()
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return NextResponse.json({ error: "Valid email is required" }, { status: 400 })
+    return tracedJson(req, { error: "Valid email is required" }, { status: 400 })
   }
 
   const rl = readRateLimitConfig()
@@ -41,7 +47,8 @@ export async function POST(
     windowMs: 60_000,
   })
   if (!bucket.ok) {
-    return NextResponse.json(
+    return tracedJson(
+      req,
       { error: "Rate limited" },
       {
         status: 429,
@@ -58,20 +65,24 @@ export async function POST(
     .maybeSingle()
 
   if (sErr) {
-    console.error("v1 access session:", sErr)
-    return NextResponse.json({ error: "Database error" }, { status: 500 })
+    log.error("v1_access_session_failed", {
+      requestId,
+      projectId,
+      detail: sErr.message,
+    })
+    return tracedJson(req, { error: "Database error" }, { status: 500 })
   }
 
   if (!session) {
-    return NextResponse.json({ ok: true })
+    return tracedJson(req, { ok: true })
   }
 
   if (session.status !== "passed") {
-    return NextResponse.json({ error: "Session not eligible" }, { status: 403 })
+    return tracedJson(req, { error: "Session not eligible" }, { status: 403 })
   }
 
   if (session.success_secret && body.secret?.trim() !== session.success_secret) {
-    return NextResponse.json({ error: "Invalid or missing secret" }, { status: 400 })
+    return tracedJson(req, { error: "Invalid or missing secret" }, { status: 400 })
   }
 
   const { data: profile, error: pErr } = await supabase
@@ -81,8 +92,12 @@ export async function POST(
     .single()
 
   if (pErr || !profile) {
-    console.error("v1 access profile:", pErr)
-    return NextResponse.json({ ok: true })
+    log.error("v1_access_profile_failed", {
+      requestId,
+      projectId,
+      detail: pErr?.message,
+    })
+    return tracedJson(req, { ok: true })
   }
 
   const { error: eErr } = await supabase.from("profile_eligibility").insert({
@@ -91,8 +106,12 @@ export async function POST(
   })
 
   if (eErr && eErr.code !== "23505") {
-    console.error("v1 access eligibility:", eErr)
+    log.error("v1_access_eligibility_failed", {
+      requestId,
+      projectId,
+      detail: eErr.message,
+    })
   }
 
-  return NextResponse.json({ ok: true })
+  return tracedJson(req, { ok: true })
 }

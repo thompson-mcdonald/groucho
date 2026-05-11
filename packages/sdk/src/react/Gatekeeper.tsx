@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import type { ScoreBreakdown, SessionOutcome } from "../client.js"
+import type { Profile, ScoreBreakdown, SessionOutcome } from "../client.js"
 import { GrouchoApiError } from "../errors.js"
 import { useGroucho } from "./context.js"
 import { Composer } from "./Composer.js"
@@ -17,7 +17,7 @@ export type GatekeeperProps = {
   personaId?: string | null
   onOutcome?: (
     outcome: SessionOutcome,
-    meta: { scores: ScoreBreakdown; secret?: string },
+    meta: { scores: ScoreBreakdown; secret?: string; profile?: Profile },
   ) => void
   renderHeader?: () => ReactNode
   renderFooter?: () => ReactNode
@@ -99,6 +99,7 @@ export function Gatekeeper({
         onOutcome?.(res.status, {
           scores: res.scores,
           ...(res.secret !== undefined ? { secret: res.secret } : {}),
+          ...(res.profile !== undefined ? { profile: res.profile } : {}),
         })
       }
     } catch (e) {
