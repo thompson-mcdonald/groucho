@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Groucho
 
-## Getting Started
+Monorepo for the Groucho gatekeeper platform (Next.js) and the published [`@groucho/sdk`](./packages/sdk) package.
 
-First, run the development server:
+## Development
+
+Install dependencies from the repository root using [pnpm](https://pnpm.io/) (version pinned in [`package.json`](./package.json) via `packageManager`):
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Run the platform app:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Build or test the SDK:
 
-## Learn More
+```bash
+pnpm run sdk:build
+pnpm run sdk:test
+```
 
-To learn more about Next.js, take a look at the following resources:
+Run the Next.js example consumer (port **3001**):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm run example:groucho
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Docs and releases
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Documentation index: [`docs/README.md`](./docs/README.md)
+- Publishing `@groucho/sdk`: [Changesets](https://github.com/changesets/changesets) — merge version PRs from `.github/workflows/release.yml`; configure the `NPM_TOKEN` repository secret for npm publishes.

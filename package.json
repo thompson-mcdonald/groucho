@@ -2,6 +2,7 @@
   "name": "groucho",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.0.8",
   "workspaces": [
     "packages/*",
     "examples/*"
@@ -12,13 +13,13 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "sdk:codegen": "npm run codegen -w @groucho/sdk",
-    "sdk:build": "npm run build -w @groucho/sdk",
-    "sdk:test": "npm run test -w @groucho/sdk",
-    "example:groucho": "npm run dev -w next-groucho-example",
+    "sdk:codegen": "pnpm --filter @groucho/sdk run codegen",
+    "sdk:build": "pnpm --filter @groucho/sdk run build",
+    "sdk:test": "pnpm --filter @groucho/sdk run test",
+    "example:groucho": "pnpm --filter next-groucho-example run dev",
     "changeset": "changeset",
     "changeset:version": "changeset version",
-    "release": "npm run sdk:build && changeset publish"
+    "release": "pnpm run sdk:build && changeset publish"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.77.0",

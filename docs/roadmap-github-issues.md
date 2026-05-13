@@ -76,7 +76,7 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 
 ---
 
-## Phase 5 — `@groucho/sdk` v1 — **feature complete** (publish pipeline optional)
+## Phase 5 — `@groucho/sdk` v1 — **feature complete** (first npm publish still pending)
 
 | Title | Type | Status | Description |
 |-------|------|--------|-------------|
@@ -84,7 +84,7 @@ Reference docs: [PRD.md](./PRD.md), [schema-migration.md](./schema-migration.md)
 | Implement `createClient` + types from OpenAPI | feature | done | `openapi-typescript` → `src/generated/openapi.ts`; `createClient`, `GrouchoApiError`, `createServerClient` in `./server`. |
 | Implement `Gatekeeper` + primitives | feature | done | `GrouchoProvider`, `Gatekeeper`, `Transcript`, `Composer`, `OutcomeBanner`, `ThinkingIndicator`; default dark tokens in `styles/groucho.css`. |
 | Example: `examples/next-groucho` with proxy route | docs | done | `GET/POST /api/groucho/[...path]` forwards with `GROUPCHO_API_KEY`; local `middleware.ts` so the example does not inherit repo-root auth middleware. |
-| Publish npm (private or public) | chore | pending | Changesets or semantic-release (not wired). |
+| Publish npm (private or public) | chore | pending | Changesets + [`release.yml`](../.github/workflows/release.yml) on `main` (pnpm); add `NPM_TOKEN` and land the first changeset. |
 
 **Depends on:** Phase 3 OpenAPI stable (can stub until then).  
 **Parallel with:** Phase 4 optional.
