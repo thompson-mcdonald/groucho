@@ -63,7 +63,7 @@ importers:
 
   examples/next-groucho:
     dependencies:
-      '@groucho/sdk':
+      '@groucho-gatekeeper/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       next:

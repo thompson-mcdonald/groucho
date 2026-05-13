@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import "@groucho/sdk/groucho.css"
+import "@groucho-gatekeeper/sdk/groucho.css"
 import "./globals.css"
 
 export const metadata: Metadata = {

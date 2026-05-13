@@ -1,6 +1,6 @@
 "use client"
 
-import { Gatekeeper, GrouchoProvider } from "@groucho/sdk/react"
+import { Gatekeeper, GrouchoProvider } from "@groucho-gatekeeper/sdk/react"
 
 export default function Home() {
   return (
