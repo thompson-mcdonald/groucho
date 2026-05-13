@@ -4,6 +4,8 @@ Monorepo for the Groucho gatekeeper platform (Next.js) and the published [`@grou
 
 ## Development
 
+Use **Node.js 22.13+** at the repo root (required by **pnpm 11**; CI uses the same major version).
+
 Install dependencies from the repository root using [pnpm](https://pnpm.io/) (version pinned in [`package.json`](./package.json) via `packageManager`):
 
 ```bash
